@@ -1,0 +1,11 @@
+bits 16
+
+; MOV REG8/MEM8, REG8
+mov al, cl
+; mov [bx+si], cl
+
+; MOV REG16/MEM16, REG16
+
+; MOV REG8, REG8/MEM8
+
+; MOV REG16, REG16/MEM16

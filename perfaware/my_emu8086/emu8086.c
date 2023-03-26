@@ -1,3 +1,4 @@
+#include <stdint.h>
 #include <stdio.h>
 #include <sys/mman.h>
 #include <sys/types.h>
@@ -6,19 +7,62 @@
 #include <stdlib.h>
 #include <unistd.h>
 
+//////////////////////////////////////////////////////////////////////
+
 enum Status_Code { 
 	status_code_ok = 0,
 	status_code_failure = 1,
 };
 
-static int g_status_code = EXIT_SUCCESS;
 
 #define HANDLE_ERROR(msg) \
 	do { perror(msg); exit(EXIT_FAILURE); } while(0)
 
+struct Instruction
+{
+	uint8_t bytes[6];
 
-enum Status_Code
-decode_instructions(char *machine_code, ssize_t size);
+	uint8_t direction;
+	uint8_t wide;
+
+	uint8_t mod;
+	uint8_t reg;
+	uint8_t reg_or_mem;
+
+	uint16_t displacement;
+
+	uint8_t addr_lo;
+	uint8_t addr_hi;
+
+	uint8_t data_lo;
+	uint8_t data_hi;
+};
+
+struct Byte_Stream
+{
+	uint8_t *base;
+	ssize_t size;
+	ssize_t offset;
+};
+
+//////////////////////////////////////////////////////////////////////
+
+enum Status_Code 
+decode_instruction(struct Byte_Stream *, struct Instruction *);
+
+void 
+print_instruction(struct Instruction *);
+
+//////////////////////////////////////////////////////////////////////
+
+static int g_status_code = EXIT_SUCCESS;
+
+static char register_table[][3] = {
+	"al", "cl", "dl", "bl", "ah", "ch", "dh", "bh", 
+	"ax", "cx", "dx", "bx", "sp", "bp", "si", "di",
+};
+
+//////////////////////////////////////////////////////////////////////
 
 int main(int argc, char **argv)
 {
@@ -36,24 +80,138 @@ int main(int argc, char **argv)
 	if (fstat(machine_code_fd, &file_stat) == -1)
 		HANDLE_ERROR("fstat");
 
-	char *machine_code = mmap(NULL, file_stat.st_size, PROT_READ,
+	uint8_t *machine_code = mmap(NULL, file_stat.st_size, PROT_READ,
 		MAP_PRIVATE, machine_code_fd, 0);
 
-	enum Status_Code rc = decode_instructions(machine_code, file_stat.st_size);
-	if (rc != status_code_ok)
-	{
-		fprintf(stderr, "Fail to decode\n");
-		g_status_code = rc;
-	}
+	struct Byte_Stream instruction_stream = {
+		.base = machine_code,
+		.size = file_stat.st_size,
+	};
 
+	struct Instruction instruction = {0};
+
+	if (instruction_stream.offset < instruction_stream.size)
+		fprintf(stdout, "bits 16\n");
+
+	enum Status_Code rc;
+	while(instruction_stream.offset < instruction_stream.size)
+	{
+		rc = decode_instruction(&instruction_stream, &instruction);
+		if (rc != status_code_ok)
+		{
+			fprintf(stderr, "Fail to decode. instruction.bytes[0] = %x\n", instruction.bytes[0]);
+			g_status_code = rc;
+			break;
+		}
+
+		print_instruction(&instruction);
+	}
+	
 	munmap(machine_code, file_stat.st_size);
 	close(machine_code_fd);
 
 	exit(g_status_code);
 }
 
-enum Status_Code
-decode_instructions(char *machine_code, ssize_t size)
+//////////////////////////////////////////////////////////////////////
+
+void
+read_u16(uint16_t *destination, uint8_t *source)
 {
-	return 0;
+	*destination = ((uint16_t)source[1] << 8) & source[0];
+}
+
+
+enum Status_Code
+decode_instruction(struct Byte_Stream *stream, struct Instruction *instruction)
+{
+	uint8_t *bytes = stream->base+stream->offset;
+	ssize_t step = 0;
+
+	instruction->bytes[0] = bytes[0];
+
+	switch (bytes[0])
+	{
+	// Register/memory to/from register
+	case 0x88:
+	case 0x89:
+	case 0x8A:
+	case 0x8B:
+	{
+		instruction->direction = (bytes[0] & 2) > 1;
+		instruction->wide = (bytes[0] & 1);
+		step += 1;
+
+		instruction->mod = (bytes[1] >> 6) & 0x03;
+		instruction->reg = (bytes[1] >> 3) & 0x07;
+		instruction->reg_or_mem = bytes[1] & 0x07;
+		step += 1;
+
+		if (instruction->mod == 0)
+		{
+			if (instruction->reg_or_mem == 0x06)
+			{
+				read_u16(&instruction->displacement, &bytes[2]);
+				step += 2;
+			}
+		}
+		else if (instruction->mod == 1)
+		{
+			instruction->displacement = bytes[2];
+			step += 1;
+		}
+		else if (instruction->mod == 2)
+		{
+			read_u16(&instruction->displacement, &bytes[2]);
+			step += 2;
+		}
+	} break;
+
+	default:
+		return status_code_failure;
+	}
+	
+	stream->offset += step;
+	return status_code_ok;
+}
+
+
+
+void
+print_instruction(struct Instruction *instruction)
+{
+	// fprintf(stdout, "%x\n", instruction->bytes[0]);
+	switch (instruction->bytes[0])
+	{
+	// Register/memory to/from register
+	case 0x88:
+	case 0x89:
+	case 0x8A:
+	case 0x8B:
+	{
+		if (instruction->mod == 3)
+		{
+			char *reg1 = register_table[instruction->reg + 8*instruction->wide];
+			char *reg2 = register_table[instruction->reg_or_mem + 8*instruction->wide];
+
+			char *source;
+			char *destination;
+
+			if (instruction->direction)
+			{
+				source = reg2;
+				destination = reg1;
+			}
+			else
+			{
+				source = reg1;
+				destination = reg2;
+			}
+			fprintf(stdout, "mov %s, %s\n", destination, source);
+		}
+	} break;
+
+	default:
+		fprintf(stdout, "Fail to print instruction: %x\n", instruction->bytes[0]);
+	}
 }
