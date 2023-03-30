@@ -1,11 +1,30 @@
 bits 16
 
-; MOV REG8/MEM8, REG8
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Register_or_memory_to_or_from_register
+
+; MOD = 11
 mov al, cl
-; mov [bx+si], cl
+mov bh, al
 
-; MOV REG16/MEM16, REG16
+; MOD = 00
+mov [bx+si], cl
+mov cl, [bx+si]
+mov [bx], bx
+mov [bx], bl
 
-; MOV REG8, REG8/MEM8
+; DIRECT ADDRESS
+mov [12], cl
 
-; MOV REG16, REG16/MEM16
+; MOD == 01
+mov [bx+si+45], cl
+mov [bx+si-45], cx
+mov cx, [bx+si+45]
+
+; MOD == 10
+mov [si-894], cx
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Immediate to register_or_memory
+

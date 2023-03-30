@@ -6,6 +6,7 @@
 #include <fcntl.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <stdbool.h>
 
 //////////////////////////////////////////////////////////////////////
 
@@ -60,6 +61,10 @@ static int g_status_code = EXIT_SUCCESS;
 static char register_table[][3] = {
 	"al", "cl", "dl", "bl", "ah", "ch", "dh", "bh", 
 	"ax", "cx", "dx", "bx", "sp", "bp", "si", "di",
+};
+
+static char effective_address_table[][6] = {
+	"bx+si", "bx+di", "bp+si", "bp+di", "si", "di", "bp", "bx"
 };
 
 //////////////////////////////////////////////////////////////////////
@@ -118,9 +123,15 @@ int main(int argc, char **argv)
 void
 read_u16(uint16_t *destination, uint8_t *source)
 {
-	*destination = ((uint16_t)source[1] << 8) & source[0];
+	// *destination = ((uint16_t)source[1] << 8) | source[0];
+	*destination = *(uint16_t *)source;
 }
 
+bool
+is_register_or_memory_to_or_from_register(uint8_t byte)
+{
+	return 0x88 == (byte & 0xFC);
+}
 
 enum Status_Code
 decode_instruction(struct Byte_Stream *stream, struct Instruction *instruction)
@@ -130,15 +141,9 @@ decode_instruction(struct Byte_Stream *stream, struct Instruction *instruction)
 
 	instruction->bytes[0] = bytes[0];
 
-	switch (bytes[0])
+	if (is_register_or_memory_to_or_from_register(bytes[0]))
 	{
-	// Register/memory to/from register
-	case 0x88:
-	case 0x89:
-	case 0x8A:
-	case 0x8B:
-	{
-		instruction->direction = (bytes[0] & 2) > 1;
+		instruction->direction = (bytes[0] & 2) >> 1;
 		instruction->wide = (bytes[0] & 1);
 		step += 1;
 
@@ -165,18 +170,79 @@ decode_instruction(struct Byte_Stream *stream, struct Instruction *instruction)
 			read_u16(&instruction->displacement, &bytes[2]);
 			step += 2;
 		}
-	} break;
-
-	default:
-		return status_code_failure;
 	}
+	else
+		return status_code_failure;
 	
 	stream->offset += step;
 	return status_code_ok;
 }
 
 
+void
+print_instruction(struct Instruction *instruction)
+{
+	if (is_register_or_memory_to_or_from_register(instruction->bytes[0]))
+	{
+		if (instruction->mod == 3)
+		{
+			char *reg1 = register_table[instruction->reg + 8*instruction->wide];
+			char *reg2 = register_table[instruction->reg_or_mem + 8*instruction->wide];
 
+			if (instruction->direction) 
+				fprintf(stdout, "mov %s, %s\n", reg1, reg2);
+			else
+				fprintf(stdout, "mov %s, %s\n", reg2, reg1);
+		}
+		else if (instruction->mod == 0)
+		{
+			char *reg = register_table[instruction->reg + 8*instruction->wide];
+			// special case: DIRECT ADDRESS
+			if (instruction->reg_or_mem == 0x06)
+			{
+				if (instruction->direction)
+					fprintf(stdout, "mov %s, [%d]\n", reg, instruction->displacement);
+				else
+					fprintf(stdout, "mov [%d], %s\n", instruction->displacement, reg);
+			}
+			else 
+			{
+				char *effective_address = effective_address_table[instruction->reg_or_mem];	
+				if (instruction->direction)
+					fprintf(stdout, "mov %s, [%s]\n", reg, effective_address);
+				else
+					fprintf(stdout, "mov [%s], %s\n", effective_address, reg);
+			}
+		}
+		else if (instruction->mod == 1)
+		{
+			char *reg = register_table[instruction->reg + 8*instruction->wide];
+			char *effective_address = effective_address_table[instruction->reg_or_mem];	
+			uint16_t displacement = instruction->displacement;
+			if (instruction->direction)
+				fprintf(stdout, "mov %s, [%s%+d]\n", reg, effective_address, (int8_t)displacement);
+			else
+				fprintf(stdout, "mov [%s%+d], %s\n", effective_address, (int8_t)displacement, reg );
+		}
+		else if (instruction->mod == 2)
+		{
+			char *reg = register_table[instruction->reg + 8*instruction->wide];
+			char *effective_address = effective_address_table[instruction->reg_or_mem];	
+			uint16_t displacement = instruction->displacement;
+			if (instruction->direction)
+				fprintf(stdout, "mov %s, [%s%+d]\n", reg, effective_address, displacement);
+			else
+				fprintf(stdout, "mov [%s%+d], %s\n", effective_address, displacement, reg );
+		}
+	}
+	else
+	{
+		fprintf(stdout, "Fail to print instruction: %x\n", instruction->bytes[0]);
+	}
+}
+
+
+/*
 void
 print_instruction(struct Instruction *instruction)
 {
@@ -215,3 +281,5 @@ print_instruction(struct Instruction *instruction)
 		fprintf(stdout, "Fail to print instruction: %x\n", instruction->bytes[0]);
 	}
 }
+*/
+
