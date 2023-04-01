@@ -165,25 +165,25 @@ void instruction_read_address(struct Instruction *instruction,
 
 // TODO rename is_* to is_mov_*
 bool
-is_register_or_memory_to_or_from_register(uint8_t byte)
+is_mov_register_or_memory_to_or_from_register(uint8_t byte)
 {
 	return 0x88 == (byte & 0xFC);
 }
 
 bool
-is_immediate_to_register_or_memory(uint8_t byte)
+is_mov_immediate_to_register_or_memory(uint8_t byte)
 {
 	return 0xC6 == (byte & 0xFE);
 }
 
 bool
-is_immediate_to_register(uint8_t byte)
+is_mov_immediate_to_register(uint8_t byte)
 {
 	return 0xB0 == (byte & 0xF0);
 }
 
 bool
-is_memory_to_acc_or_acc_to_memory(uint8_t byte)
+is_mov_memory_to_acc_or_acc_to_memory(uint8_t byte)
 {
 	return 0xA0 == (byte & 0xF0);
 }
@@ -191,7 +191,6 @@ is_memory_to_acc_or_acc_to_memory(uint8_t byte)
 bool
 is_push_register_or_memory(uint8_t byte1, uint8_t byte2)
 {
-	// byte2 = __110___
 	return (0xFF == byte1) && (0x06 == ((byte2 & 0x30) >> 3));
 }
 
@@ -202,7 +201,7 @@ decode_instruction(struct Byte_Stream *stream, struct Instruction *instruction)
 	uint8_t *bytes = stream->base+stream->offset;
 	ssize_t offset = 0;
 
-	if (is_register_or_memory_to_or_from_register(bytes[offset]))
+	if (is_mov_register_or_memory_to_or_from_register(bytes[offset]))
 	{
 		instruction->direction = (bytes[offset] & 2) >> 1;
 		instruction->wide = (bytes[offset] & 1);
@@ -224,7 +223,7 @@ decode_instruction(struct Byte_Stream *stream, struct Instruction *instruction)
 		else if (instruction->mod == 2)
 			instruction_read_displacement16(instruction, bytes, &offset);
 	}
-	else if (is_immediate_to_register_or_memory(bytes[offset]))
+	else if (is_mov_immediate_to_register_or_memory(bytes[offset]))
 	{
 		instruction->direction = 1;
 		instruction->wide = (bytes[offset] & 1);
@@ -255,14 +254,14 @@ decode_instruction(struct Byte_Stream *stream, struct Instruction *instruction)
 			instruction_read_data(instruction, bytes, &offset);
 		}
 	}
-	else if (is_immediate_to_register(bytes[offset]))
+	else if (is_mov_immediate_to_register(bytes[offset]))
 	{
 		instruction->wide = (bytes[offset] >> 3) & 1;
 		instruction->reg = bytes[offset] & 0x07;
 		offset += 1;
 		instruction_read_data(instruction, bytes, &offset);
 	}
-	else if (is_memory_to_acc_or_acc_to_memory(bytes[offset]))
+	else if (is_mov_memory_to_acc_or_acc_to_memory(bytes[offset]))
 	{
 		instruction->wide = bytes[offset] & 1;
 		instruction->direction = (bytes[offset] & 2) >> 1;
@@ -300,7 +299,7 @@ decode_instruction(struct Byte_Stream *stream, struct Instruction *instruction)
 void
 print_instruction(struct Instruction *instruction)
 {
-	if (is_register_or_memory_to_or_from_register(instruction->bytes[0]))
+	if (is_mov_register_or_memory_to_or_from_register(instruction->bytes[0]))
 	{
 		if (instruction->mod == 3)
 		{
@@ -353,7 +352,7 @@ print_instruction(struct Instruction *instruction)
 				fprintf(stdout, "mov [%s%+d], %s\n", effective_address, (int16_t)displacement, reg );
 		}
 	}
-	else if (is_immediate_to_register_or_memory(instruction->bytes[0]))
+	else if (is_mov_immediate_to_register_or_memory(instruction->bytes[0]))
 	{
 		if (instruction->mod == 0)
 		{
@@ -394,7 +393,7 @@ print_instruction(struct Instruction *instruction)
 				fprintf(stdout, "mov [%s%+d], byte %+d\n", effective_address, displacement, (int8_t)instruction->data);
 		}
 	}
-	else if (is_immediate_to_register(instruction->bytes[0]))
+	else if (is_mov_immediate_to_register(instruction->bytes[0]))
 	{
 		char *reg = register_table[instruction->reg + 8*instruction->wide];
 		if (instruction->wide)
@@ -402,7 +401,7 @@ print_instruction(struct Instruction *instruction)
 		else
 			fprintf(stdout, "mov %s, byte %+d\n", reg, (int8_t)instruction->data);
 	}
-	else if (is_memory_to_acc_or_acc_to_memory(instruction->bytes[0]))
+	else if (is_mov_memory_to_acc_or_acc_to_memory(instruction->bytes[0]))
 	{
 		char *reg = register_table[0 + 8*instruction->wide];
 		if (instruction->direction)
