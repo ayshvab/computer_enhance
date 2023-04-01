@@ -22,6 +22,7 @@ enum Status_Code {
 struct Instruction
 {
 	uint8_t bytes[6];
+	int8_t bytes_size; // Size of instruction in bytes
 
 	uint8_t direction;
 	uint8_t wide;
@@ -117,48 +118,52 @@ int main(int argc, char **argv)
 
 //////////////////////////////////////////////////////////////////////
 
-ssize_t
-read_u16(uint16_t *destination, uint8_t *source)
+void 
+memory_copy(uint8_t *destination, uint8_t *source, int32_t size)
 {
-	// *destination = ((uint16_t)source[1] << 8) | source[0];
-	*destination = *(uint16_t *)source;
-	return 2;
+	uint32_t offset = 0;
+	while (offset < size)
+	{
+		destination[offset] = source[offset];
+		offset++;
+	}
 }
 
 void instruction_read_data(struct Instruction *instruction, 
-						   uint8_t *bytes, ssize_t *offset)
+						   uint8_t *bytes, ssize_t *p_offset)
 {
-	if (instruction->wide)
-	{
-		*offset += read_u16(&instruction->data, &bytes[*offset]);
-	}
-	else
-	{
-		instruction->data = bytes[*offset];
-		*offset += 1;
-	}
+	ssize_t offset = *p_offset;
+	uint8_t width = instruction->wide + 1;
+	memory_copy((uint8_t *)&instruction->data, bytes+offset, width);
+	*p_offset += width;
 }
 
+
 void instruction_read_displacement16(struct Instruction *instruction, 
-									 uint8_t *bytes, ssize_t *offset)
+									 uint8_t *bytes, ssize_t *p_offset)
 {
-	*offset += read_u16(&instruction->displacement, &bytes[*offset]);
+	ssize_t offset = *p_offset;
+	memory_copy((uint8_t *)&instruction->displacement, bytes+offset, 2);
+	*p_offset += 2;
 }
 
 
 void instruction_read_displacement8(struct Instruction *instruction, 
-									uint8_t *bytes, ssize_t *offset)
+									uint8_t *bytes, ssize_t *p_offset)
 {
-	instruction->displacement = bytes[*offset];
-	*offset += 1;
+	instruction->displacement = bytes[*p_offset];
+	*p_offset += 1;
 }
 
 void instruction_read_address(struct Instruction *instruction, 
-									uint8_t *bytes, ssize_t *offset)
+									uint8_t *bytes, ssize_t *p_offset)
 {
-	*offset += read_u16(&instruction->address, &bytes[*offset]);
+	ssize_t offset = *p_offset;
+	memory_copy((uint8_t *)&instruction->address, bytes+offset, 2);
+	*p_offset += 2;
 }
 
+// TODO rename is_* to is_mov_*
 bool
 is_register_or_memory_to_or_from_register(uint8_t byte)
 {
@@ -183,6 +188,12 @@ is_memory_to_acc_or_acc_to_memory(uint8_t byte)
 	return 0xA0 == (byte & 0xF0);
 }
 
+bool
+is_push_register_or_memory(uint8_t byte1, uint8_t byte2)
+{
+	// byte2 = __110___
+	return (0xFF == byte1) && (0x06 == ((byte2 & 0x30) >> 3));
+}
 
 
 enum Status_Code
@@ -190,8 +201,6 @@ decode_instruction(struct Byte_Stream *stream, struct Instruction *instruction)
 {
 	uint8_t *bytes = stream->base+stream->offset;
 	ssize_t offset = 0;
-
-	instruction->bytes[0] = bytes[0];
 
 	if (is_register_or_memory_to_or_from_register(bytes[offset]))
 	{
@@ -202,6 +211,7 @@ decode_instruction(struct Byte_Stream *stream, struct Instruction *instruction)
 		instruction->mod = (bytes[offset] >> 6) & 0x03;
 		instruction->reg = (bytes[offset] >> 3) & 0x07;
 		instruction->reg_or_mem = bytes[offset] & 0x07;
+		instruction->bytes[offset] = bytes[offset];
 		offset += 1;
 
 		if (instruction->mod == 0)
@@ -259,10 +269,30 @@ decode_instruction(struct Byte_Stream *stream, struct Instruction *instruction)
 		offset += 1;
 		instruction_read_address(instruction, bytes, &offset);
 	}
+	else if (is_push_register_or_memory(bytes[offset], bytes[offset+1]))
+	{
+		offset += 1;
+		instruction->mod = (bytes[offset] >> 6) & 0x03;
+		instruction->reg_or_mem = bytes[offset] & 0x07;
+		offset += 1;
+		if (instruction->mod == 0)
+		{
+			if (instruction->reg_or_mem == 0x06)
+				instruction_read_displacement16(instruction, bytes, &offset);
+		}
+		else if (instruction->mod == 1)
+			instruction_read_displacement8(instruction, bytes, &offset);
+		else if (instruction->mod == 2)
+			instruction_read_displacement16(instruction, bytes, &offset);
+	}
 	else
 		return status_code_failure;
 	
 	stream->offset += offset;
+
+	instruction->bytes_size = offset-1;
+	memory_copy(instruction->bytes, bytes, instruction->bytes_size); 
+
 	return status_code_ok;
 }
 
@@ -379,6 +409,31 @@ print_instruction(struct Instruction *instruction)
 			fprintf(stdout, "mov [%d], %s\n", instruction->address, reg);
 		else
 			fprintf(stdout, "mov %s, [%d]\n", reg, instruction->address);
+	}
+	else if (is_push_register_or_memory(instruction->bytes[0], instruction->bytes[1]))
+    {
+		if (instruction->mod == 0)
+		{
+			if (instruction->reg_or_mem == 0x06)
+				fprintf(stdout, "push word [%d]\n", instruction->displacement);
+			else 
+			{
+				char *effective_address = effective_address_table[instruction->reg_or_mem];	
+				fprintf(stdout, "push word [%s]\n", effective_address);
+			}
+		}
+		else if (instruction->mod == 1)
+		{
+			char *effective_address = effective_address_table[instruction->reg_or_mem];	
+			uint16_t displacement = instruction->displacement;
+			fprintf(stdout, "push word [%s%+d]\n", effective_address, (int8_t)displacement);
+		}
+		else if (instruction->mod == 2)
+		{
+			char *effective_address = effective_address_table[instruction->reg_or_mem];	
+			uint16_t displacement = instruction->displacement;
+			fprintf(stdout, "push word [%s%+d]\n", effective_address, displacement);
+		}
 	}
 	else
 	{

@@ -36,3 +36,22 @@ mov [bx+si], word -1345
 mov [1234], ax
 mov [1234], al
 mov al, [1234]
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Push
+
+; Push from register or memory
+push word [bx+si+4096]
+push word [bp + si]
+push word [3000]
+push word [bx + di - 30]
+
+; push cx
+; push ax
+; push dx
+; push cs
+
+; Push from register
+; push bx 
+
+; Push to segment register
