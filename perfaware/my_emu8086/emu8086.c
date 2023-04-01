@@ -31,12 +31,9 @@ struct Instruction
 	uint8_t reg_or_mem;
 
 	uint16_t displacement;
+	uint16_t address;
 
-	uint8_t addr_lo;
-	uint8_t addr_hi;
-
-	uint8_t data_lo;
-	uint8_t data_hi;
+	uint16_t data;
 };
 
 struct Byte_Stream
@@ -120,11 +117,46 @@ int main(int argc, char **argv)
 
 //////////////////////////////////////////////////////////////////////
 
-void
+ssize_t
 read_u16(uint16_t *destination, uint8_t *source)
 {
 	// *destination = ((uint16_t)source[1] << 8) | source[0];
 	*destination = *(uint16_t *)source;
+	return 2;
+}
+
+void instruction_read_data(struct Instruction *instruction, 
+						   uint8_t *bytes, ssize_t *offset)
+{
+	if (instruction->wide)
+	{
+		*offset += read_u16(&instruction->data, &bytes[*offset]);
+	}
+	else
+	{
+		instruction->data = bytes[*offset];
+		*offset += 1;
+	}
+}
+
+void instruction_read_displacement16(struct Instruction *instruction, 
+									 uint8_t *bytes, ssize_t *offset)
+{
+	*offset += read_u16(&instruction->displacement, &bytes[*offset]);
+}
+
+
+void instruction_read_displacement8(struct Instruction *instruction, 
+									uint8_t *bytes, ssize_t *offset)
+{
+	instruction->displacement = bytes[*offset];
+	*offset += 1;
+}
+
+void instruction_read_address(struct Instruction *instruction, 
+									uint8_t *bytes, ssize_t *offset)
+{
+	*offset += read_u16(&instruction->address, &bytes[*offset]);
 }
 
 bool
@@ -133,48 +165,104 @@ is_register_or_memory_to_or_from_register(uint8_t byte)
 	return 0x88 == (byte & 0xFC);
 }
 
+bool
+is_immediate_to_register_or_memory(uint8_t byte)
+{
+	return 0xC6 == (byte & 0xFE);
+}
+
+bool
+is_immediate_to_register(uint8_t byte)
+{
+	return 0xB0 == (byte & 0xF0);
+}
+
+bool
+is_memory_to_acc_or_acc_to_memory(uint8_t byte)
+{
+	return 0xA0 == (byte & 0xF0);
+}
+
+
+
 enum Status_Code
 decode_instruction(struct Byte_Stream *stream, struct Instruction *instruction)
 {
 	uint8_t *bytes = stream->base+stream->offset;
-	ssize_t step = 0;
+	ssize_t offset = 0;
 
 	instruction->bytes[0] = bytes[0];
 
-	if (is_register_or_memory_to_or_from_register(bytes[0]))
+	if (is_register_or_memory_to_or_from_register(bytes[offset]))
 	{
-		instruction->direction = (bytes[0] & 2) >> 1;
-		instruction->wide = (bytes[0] & 1);
-		step += 1;
+		instruction->direction = (bytes[offset] & 2) >> 1;
+		instruction->wide = (bytes[offset] & 1);
+		offset += 1;
 
-		instruction->mod = (bytes[1] >> 6) & 0x03;
-		instruction->reg = (bytes[1] >> 3) & 0x07;
-		instruction->reg_or_mem = bytes[1] & 0x07;
-		step += 1;
+		instruction->mod = (bytes[offset] >> 6) & 0x03;
+		instruction->reg = (bytes[offset] >> 3) & 0x07;
+		instruction->reg_or_mem = bytes[offset] & 0x07;
+		offset += 1;
+
+		if (instruction->mod == 0)
+		{
+			if (instruction->reg_or_mem == 0x06)
+				instruction_read_displacement16(instruction, bytes, &offset);
+		}
+		else if (instruction->mod == 1)
+			instruction_read_displacement8(instruction, bytes, &offset);
+		else if (instruction->mod == 2)
+			instruction_read_displacement16(instruction, bytes, &offset);
+	}
+	else if (is_immediate_to_register_or_memory(bytes[offset]))
+	{
+		instruction->direction = 1;
+		instruction->wide = (bytes[offset] & 1);
+		offset += 1;
+
+		instruction->mod = (bytes[offset] >> 6) & 0x03;
+		instruction->reg_or_mem = bytes[offset] & 0x07;
+		offset += 1;
 
 		if (instruction->mod == 0)
 		{
 			if (instruction->reg_or_mem == 0x06)
 			{
-				read_u16(&instruction->displacement, &bytes[2]);
-				step += 2;
+				instruction_read_displacement16(instruction, bytes, &offset);
+				instruction_read_data(instruction, bytes, &offset);
 			}
+			else
+				instruction_read_data(instruction, bytes, &offset);
 		}
 		else if (instruction->mod == 1)
 		{
-			instruction->displacement = bytes[2];
-			step += 1;
+			instruction_read_displacement8(instruction, bytes, &offset);
+			instruction_read_data(instruction, bytes, &offset);
 		}
 		else if (instruction->mod == 2)
 		{
-			read_u16(&instruction->displacement, &bytes[2]);
-			step += 2;
+			instruction_read_displacement16(instruction, bytes, &offset);
+			instruction_read_data(instruction, bytes, &offset);
 		}
+	}
+	else if (is_immediate_to_register(bytes[offset]))
+	{
+		instruction->wide = (bytes[offset] >> 3) & 1;
+		instruction->reg = bytes[offset] & 0x07;
+		offset += 1;
+		instruction_read_data(instruction, bytes, &offset);
+	}
+	else if (is_memory_to_acc_or_acc_to_memory(bytes[offset]))
+	{
+		instruction->wide = bytes[offset] & 1;
+		instruction->direction = (bytes[offset] & 2) >> 1;
+		offset += 1;
+		instruction_read_address(instruction, bytes, &offset);
 	}
 	else
 		return status_code_failure;
 	
-	stream->offset += step;
+	stream->offset += offset;
 	return status_code_ok;
 }
 
@@ -232,8 +320,65 @@ print_instruction(struct Instruction *instruction)
 			if (instruction->direction)
 				fprintf(stdout, "mov %s, [%s%+d]\n", reg, effective_address, displacement);
 			else
-				fprintf(stdout, "mov [%s%+d], %s\n", effective_address, displacement, reg );
+				fprintf(stdout, "mov [%s%+d], %s\n", effective_address, (int16_t)displacement, reg );
 		}
+	}
+	else if (is_immediate_to_register_or_memory(instruction->bytes[0]))
+	{
+		if (instruction->mod == 0)
+		{
+			// special case: DIRECT ADDRESS
+			if (instruction->reg_or_mem == 0x06)
+			{
+				if (instruction->wide)
+					fprintf(stdout, "mov [%d], word %+d\n", instruction->displacement, instruction->data);
+				else
+					fprintf(stdout, "mov [%d], byte %+d\n", instruction->displacement, (int8_t)instruction->data);
+			}
+			else 
+			{
+				char *effective_address = effective_address_table[instruction->reg_or_mem];	
+
+				if (instruction->wide)
+					fprintf(stdout, "mov [%s], word %+d\n", effective_address, instruction->data);
+				else
+					fprintf(stdout, "mov [%s], byte %+d\n", effective_address, (int8_t)instruction->data);
+			}
+		}
+		else if (instruction->mod == 1)
+		{
+			char *effective_address = effective_address_table[instruction->reg_or_mem];	
+			uint16_t displacement = instruction->displacement;
+			if (instruction->wide)
+				fprintf(stdout, "mov [%s%+d], word %+d\n", effective_address, (int8_t)displacement, instruction->data);
+			else
+				fprintf(stdout, "mov [%s%+d], byte %+d\n", effective_address, (int8_t)displacement, (int8_t)instruction->data);
+		}
+		else if (instruction->mod == 2)
+		{
+			char *effective_address = effective_address_table[instruction->reg_or_mem];	
+			uint16_t displacement = instruction->displacement;
+			if (instruction->wide)
+				fprintf(stdout, "mov [%s%+d], word %+d\n", effective_address, displacement, instruction->data);
+			else
+				fprintf(stdout, "mov [%s%+d], byte %+d\n", effective_address, displacement, (int8_t)instruction->data);
+		}
+	}
+	else if (is_immediate_to_register(instruction->bytes[0]))
+	{
+		char *reg = register_table[instruction->reg + 8*instruction->wide];
+		if (instruction->wide)
+			fprintf(stdout, "mov %s, word %+d\n", reg, instruction->data);
+		else
+			fprintf(stdout, "mov %s, byte %+d\n", reg, (int8_t)instruction->data);
+	}
+	else if (is_memory_to_acc_or_acc_to_memory(instruction->bytes[0]))
+	{
+		char *reg = register_table[0 + 8*instruction->wide];
+		if (instruction->direction)
+			fprintf(stdout, "mov [%d], %s\n", instruction->address, reg);
+		else
+			fprintf(stdout, "mov %s, [%d]\n", reg, instruction->address);
 	}
 	else
 	{
@@ -241,45 +386,4 @@ print_instruction(struct Instruction *instruction)
 	}
 }
 
-
-/*
-void
-print_instruction(struct Instruction *instruction)
-{
-	// fprintf(stdout, "%x\n", instruction->bytes[0]);
-	switch (instruction->bytes[0])
-	{
-	// Register/memory to/from register
-	case 0x88:
-	case 0x89:
-	case 0x8A:
-	case 0x8B:
-	{
-		if (instruction->mod == 3)
-		{
-			char *reg1 = register_table[instruction->reg + 8*instruction->wide];
-			char *reg2 = register_table[instruction->reg_or_mem + 8*instruction->wide];
-
-			char *source;
-			char *destination;
-
-			if (instruction->direction)
-			{
-				source = reg2;
-				destination = reg1;
-			}
-			else
-			{
-				source = reg1;
-				destination = reg2;
-			}
-			fprintf(stdout, "mov %s, %s\n", destination, source);
-		}
-	} break;
-
-	default:
-		fprintf(stdout, "Fail to print instruction: %x\n", instruction->bytes[0]);
-	}
-}
-*/
 
