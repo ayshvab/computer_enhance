@@ -1,0 +1,40 @@
+# Ignore all
+*
+
+!emu086/
+emu8086/tmp
+
+# Unignore all with extensions
+!*.*
+
+# Unignore .gitignore file
+!.gitignore
+
+# Unignore Makefile
+!Makefile
+
+# Executables
+*.exe
+
+# Ignore object files
+*.o
+
+*.out
+
+# vscode files
+.vscode
+
+# eclipse files
+.cproject
+.project
+.classpath
+.settings
+
+# perf output
+perf.data*
+
+# maven output
+target
+
+# mac garbage
+.DS_Store
