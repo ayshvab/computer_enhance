@@ -442,6 +442,58 @@ static enum Status print_instructions(Arena *a, InstructionSlice *in,
 				*push(a, out) =
 					print(a, "mov %.*s, %.*s", dst.len, dst.data, src.len, src.data);
 			} break;
+
+			case OPCODE_ADD8_RM_REG:
+			case OPCODE_ADD16_RM_REG:
+			case OPCODE_ADD8_REG_RM:
+			case OPCODE_ADD16_REG_RM: {
+				Str src = S(register_names[instr.reg + (instr.wide * 8)]);
+				Str dst = {0};
+				if (instr.mod == 0b11) {
+					dst = S(register_names[instr.rm + (instr.wide * 8)]);
+				} else {
+					if (instr.rm == 0b110 && instr.mod == 0b00) {
+						dst = print(a, "[%d]", instr.direct_address);
+					} else {
+						if (instr.rm == 0b000) {
+							dst = S("[bx + si");
+						} else if (instr.rm == 0b001) {
+							dst = S("[bx + di");
+						} else if (instr.rm == 0b010) {
+							dst = S("[bp + si");
+						} else if (instr.rm == 0b011) {
+							dst = S("[bp + di");
+						} else if (instr.rm == 0b100) {
+							dst = S("[si");
+						} else if (instr.rm == 0b101) {
+							dst = S("[di");
+						} else if (instr.rm == 0b110) {
+							dst = S("[bp");
+						} else if (instr.rm == 0b111) {
+							dst = S("[bx");
+						}
+						if (instr.mod == 0b00) {
+							dst = print(a, "%.*s]", dst.len, dst.data);
+						} else {
+							if (instr.disp > 0) {
+								dst = print(a, "%.*s + %d]", dst.len, dst.data, instr.disp);
+							} else if (instr.disp < 0) {
+								dst = print(a, "%.*s - %d]", dst.len, dst.data, -instr.disp);
+							} else {
+								dst = print(a, "%.*s]", dst.len, dst.data);
+							}
+						}
+					}
+				}
+				if (instr.direction == 1) {
+					Str tmp = src;
+					src = dst;
+					dst = tmp;
+				}
+				*push(a, out) =
+					print(a, "add %.*s, %.*s", dst.len, dst.data, src.len, src.data);
+			} break;
+
 			case OPCODE_MOV8_AL_IMM:
 			case OPCODE_MOV8_CL_IMM:
 			case OPCODE_MOV8_DL_IMM:
@@ -514,6 +566,59 @@ static enum Status print_instructions(Arena *a, InstructionSlice *in,
 				*push(a, out) =
 					print(a, "mov %.*s, %.*s", dst.len, dst.data, src.len, src.data);
 			} break;
+			case OPCODE_ADD_MEM8_IMM8:
+			case OPCODE_ADD_MEM16_IMM16:
+			case OPCODE_ADD_MEM8_IMM8_XXXXXX: // NOTE: The same as OPCODE_ADD_MEM8_IMM8 ???
+			case OPCODE_ADD_MEM16_IMM8: {
+				Str src = {0};
+				if (instr.wide) {
+					src = S("word");
+				} else {
+					src = S("byte");
+				}
+				src = print(a, "%.*s %d", src.len, src.data, instr.imm);
+
+				// NOTE(Refactoring): Candidate for reusing
+				Str dst = {0};
+				if (instr.mod == 0b11) {
+					dst = S(register_names[instr.rm + (instr.wide * 8)]);
+				} else {
+					if (instr.rm == 0b110 && instr.mod == 0b00) {
+						dst = print(a, "[%d]", instr.direct_address);
+					} else {
+						if (instr.rm == 0b000) {
+							dst = S("[bx + si");
+						} else if (instr.rm == 0b001) {
+							dst = S("[bx + di");
+						} else if (instr.rm == 0b010) {
+							dst = S("[bp + si");
+						} else if (instr.rm == 0b011) {
+							dst = S("[bp + di");
+						} else if (instr.rm == 0b100) {
+							dst = S("[si");
+						} else if (instr.rm == 0b101) {
+							dst = S("[di");
+						} else if (instr.rm == 0b110) {
+							dst = S("[bp");
+						} else if (instr.rm == 0b111) {
+							dst = S("[bx");
+						}
+						if (instr.mod == 0b00) {
+							dst = print(a, "%.*s]", dst.len, dst.data);
+						} else {
+							if (instr.disp > 0) {
+								dst = print(a, "%.*s + %d]", dst.len, dst.data, instr.disp);
+							} else if (instr.disp < 0) {
+								dst = print(a, "%.*s - %d]", dst.len, dst.data, -instr.disp);
+							} else {
+								dst = print(a, "%.*s]", dst.len, dst.data);
+							}
+						}
+					}
+				}
+				*push(a, out) =
+					print(a, "add %.*s, %.*s", dst.len, dst.data, src.len, src.data);
+			} break;
 			case OPCODE_MOV8_AL_MEM:
 			case OPCODE_MOV16_AX_MEM:
 			case OPCODE_MOV8_MEM_AL:
@@ -551,6 +656,7 @@ static void decode_instr_mov_accum_mem(Arena *a, CodeStream *stream, Instruction
 	instr->direct_address = (stream->data[stream->at++] << 8) | (instr->direct_address);
 }
 
+
 static void decode_instr_mov_rm_reg(Arena *a, CodeStream *stream,
 				    Instruction *instr) {
 	uint8_t b0 = stream->data[stream->at++];
@@ -584,12 +690,12 @@ static void decode_instr_mov_rm_reg(Arena *a, CodeStream *stream,
 
 	// DEBUG PRINT
 	//  if (instr->reg == Reg_DX) {
-	/* printf("INSTRUCTION OPCODE: %x\n", instr->opcode); */
-	/* printf("INSTRUCTION MOD: %x\n", instr->mod); */
-	/* printf("INSTRUCTION RM: %x\n", instr->rm); */
-	/* printf("INSTRUCTION reg: %x\n", instr->reg); */
-	/* printf("INSTRUCTION disp: %d\n", instr->disp); */
-	/* printf("INSTRUCTION NEG disp: %d\n", -instr->disp); */
+	 printf("; INSTRUCTION OPCODE: %x\n", instr->opcode); 
+	 printf("; INSTRUCTION MOD: %x\n", instr->mod); 
+	 printf("; INSTRUCTION RM: %x\n", instr->rm); 
+	 printf("; INSTRUCTION reg: %x\n", instr->reg); 
+	 printf("; INSTRUCTION disp: %d\n", instr->disp); 
+	 printf("; INSTRUCTION NEG disp: %d\n", -instr->disp); 
 	//  }
 	//
 }
@@ -630,8 +736,68 @@ static void decode_instr_mov_mem_imm(Arena *a, CodeStream *stream,
 	}
 }
 
-static void decode_instr_mov_reg_imm(Arena *a, CodeStream *stream,
-				     Instruction *instr) {
+static void decode_instr_add_mem_imm(Arena* a, CodeStream* stream,
+				     Instruction* instr) {
+	uint8_t b0 = stream->data[stream->at++];
+	instr->opcode = b0;
+	instr->wide = b0 & 0b1;
+	instr->sign_extend = b0 & 0b10;
+
+	uint8_t b1 = stream->data[stream->at++];
+	int32_t mod = (b1 >> 6) & 0b11;
+	int32_t rm = b1 & 0b111;
+	instr->mod = mod;
+	instr->rm = rm;
+
+	if (mod == 0b00 && rm == 0b110) {
+		instr->direct_address = stream->data[stream->at++];
+		instr->direct_address =
+			(stream->data[stream->at++] << 8) | (instr->direct_address);
+	} else if (mod == 0b01) {
+		memcpy((uint8_t*)&instr->disp, &stream->data[stream->at], 1);
+		stream->at++;
+		// TODO: somewhat ugly
+		if ((int8_t)(((uint8_t*)&instr->disp)[0]) < 0) {
+			((uint8_t*)&instr->disp)[1] = 0xFF;
+		}
+	} else if (mod == 0b10) {
+		memcpy((uint8_t*)&instr->disp, &stream->data[stream->at], 2);
+		stream->at += 2;
+	}
+
+	if (instr->wide) {
+		if (instr->sign_extend) {
+			memcpy((uint8_t*)&instr->imm, &stream->data[stream->at], 1);
+			stream->at++;
+			// TODO: somewhat ugly
+			if ((int8_t)(((uint8_t*)&instr->imm)[0]) < 0) {
+				((uint8_t*)&instr->imm)[1] = 0xFF;
+			}
+		} else {
+			memcpy((uint8_t*)&instr->imm, &stream->data[stream->at], 2);
+			stream->at += 2;
+		}
+	} else {
+		if (instr->sign_extend) {
+			memcpy((uint8_t*)&instr->imm, &stream->data[stream->at], 1);
+			stream->at++;
+			// TODO: somewhat ugly
+			if ((int8_t)(((uint8_t*)&instr->imm)[0]) < 0) {
+				((uint8_t*)&instr->imm)[1] = 0xFF;
+			}
+		} else {
+			memcpy((uint8_t*)&instr->imm, &stream->data[stream->at], 1);
+			stream->at++;
+			// TODO: somewhat ugly
+			if ((int8_t)(((uint8_t*)&instr->imm)[0]) < 0) {
+				((uint8_t*)&instr->imm)[1] = 0x00;
+			}
+		}
+	}
+}
+
+static void decode_instr_mov_reg_imm(Arena *a, CodeStream* stream,
+				     Instruction* instr) {
 	uint8_t b0 = stream->data[stream->at++];
 	instr->opcode = b0;
 	instr->wide = (b0 >> 3) & 0b1;
@@ -646,18 +812,25 @@ static void decode_instr_mov_reg_imm(Arena *a, CodeStream *stream,
 	}
 }
 
+
+static void decode_instr_add_rm_reg(Arena *a, CodeStream* stream,
+				    Instruction* instr) {
+	decode_instr_mov_rm_reg(a, stream, instr);
+}
+
 // Transforms bytes stream into instructions
 enum Status decode(Arena *a, CodeStream *cs, InstructionSlice *out) {
 
 	for (; cs->at < cs->len;) {
 		uint8_t opcode = cs->data[cs->at];
 
-		/* printf("OPCODE: %x\n", opcode); */
-
 		Instruction instr = {};
 		switch (opcode) {
-			default:
+			default: {
+				printf("; ILLLEGAL OPCODE: %d\n", opcode);
+				fflush(stdout);
 				return FAIL_DECODE_ILLEGAL_OPCODE;
+			}
 			case OPCODE_MOV8_RM_REG:
 			case OPCODE_MOV16_RM_REG:
 			case OPCODE_MOV8_REG_RM:
@@ -692,7 +865,18 @@ enum Status decode(Arena *a, CodeStream *cs, InstructionSlice *out) {
 			case OPCODE_MOV16_MEM_AX:
 				decode_instr_mov_accum_mem(a, cs, &instr);
 				break;
-
+			case OPCODE_ADD8_RM_REG:
+			case OPCODE_ADD16_RM_REG:
+			case OPCODE_ADD8_REG_RM:
+			case OPCODE_ADD16_REG_RM:
+				decode_instr_add_rm_reg(a, cs, &instr);
+				break;
+			case OPCODE_ADD_MEM8_IMM8:
+			case OPCODE_ADD_MEM16_IMM16:
+			case OPCODE_ADD_MEM8_IMM8_XXXXXX: // NOTE: The same as OPCODE_ADD_MEM8_IMM8 ???
+			case OPCODE_ADD_MEM16_IMM8:
+				decode_instr_add_mem_imm(a, cs, &instr);
+				break;
 		}
 		*push(a, out) = instr;
 	}

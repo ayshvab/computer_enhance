@@ -17,6 +17,12 @@ enum InstructionOpcode {
 	OPCODE_OR8_AL_IMM           = 0x0C,
 	OPCODE_OR16_AX_MEM          = 0x0D,
 	OPCODE_PUSH_CS                = 0x0E,
+
+	OPCODE_ADD_MEM8_IMM8 = 0x80,
+	OPCODE_ADD_MEM16_IMM16 = 0x81,
+	OPCODE_ADD_MEM8_IMM8_XXXXXX = 0x82, // NOTE: The same as OPCODE_ADD_MEM8_IMM8 ???
+	OPCODE_ADD_MEM16_IMM8 = 0x83,
+
 	// ...
 	OPCODE_MOV8_RM_REG     = 0x88,
 	OPCODE_MOV16_RM_REG    = 0x89,
@@ -57,6 +63,7 @@ typedef struct {
 	uint8_t* data;
 	ptrdiff_t len;
 
+	int32_t sign_extend;
 	int32_t direction;
 	int32_t wide;           // 0 = 8-bit, 1 = 16-bit
 	int32_t rm;             // Register/Memory field
