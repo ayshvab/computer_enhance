@@ -566,6 +566,14 @@ static enum Status print_instructions(Arena *a, InstructionSlice *in,
 				*push(a, out) =
 					print(a, "mov %.*s, %.*s", dst.len, dst.data, src.len, src.data);
 			} break;
+			case OPCODE_ADD8_ACC_IMM:
+			case OPCODE_ADD16_ACC_IMM: {
+				Str dst = S(register_names[instr.reg + (instr.wide * 8)]);
+				Str src = print(a, "%d", instr.imm);
+				*push(a, out) =
+					print(a, "add %.*s, %.*s", dst.len, dst.data, src.len, src.data);
+			} break;
+
 			case OPCODE_ADD_MEM8_IMM8:
 			case OPCODE_ADD_MEM16_IMM16:
 			case OPCODE_ADD_MEM8_IMM8_XXXXXX: // NOTE: The same as OPCODE_ADD_MEM8_IMM8 ???
@@ -796,6 +804,23 @@ static void decode_instr_add_mem_imm(Arena* a, CodeStream* stream,
 	}
 }
 
+static void decode_instr_add_acc_imm(Arena* a, CodeStream* stream,
+				     Instruction* instr) {
+	uint8_t b0 = stream->data[stream->at++];
+	instr->opcode = b0;
+	instr->wide = b0 & 0b1;
+	instr->direction = 1;
+
+	if (instr->wide) {
+		/*instr->imm = stream->data[stream->at++];*/
+		/*instr->imm = (int16_t)(stream->data[stream->at++] << 8) | instr->imm;*/
+		memcpy((uint8_t*)&instr->imm, &stream->data[stream->at], 2);
+		stream->at += 2;
+	} else {
+		instr->imm = stream->data[stream->at++];
+	}
+}
+
 static void decode_instr_mov_reg_imm(Arena *a, CodeStream* stream,
 				     Instruction* instr) {
 	uint8_t b0 = stream->data[stream->at++];
@@ -876,6 +901,10 @@ enum Status decode(Arena *a, CodeStream *cs, InstructionSlice *out) {
 			case OPCODE_ADD_MEM8_IMM8_XXXXXX: // NOTE: The same as OPCODE_ADD_MEM8_IMM8 ???
 			case OPCODE_ADD_MEM16_IMM8:
 				decode_instr_add_mem_imm(a, cs, &instr);
+				break;
+			case OPCODE_ADD8_ACC_IMM:
+			case OPCODE_ADD16_ACC_IMM: 
+				decode_instr_add_acc_imm(a, cs, &instr);
 				break;
 		}
 		*push(a, out) = instr;
