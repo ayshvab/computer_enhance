@@ -843,6 +843,244 @@ static void decode_instr_add_rm_reg(Arena *a, CodeStream* stream,
 	decode_instr_mov_rm_reg(a, stream, instr);
 }
 
+//
+// Define the function pointer type
+typedef enum Status (*DecoderFunc)(Arena* a, CodeStream* stream, Instruction* instr);
+static DecoderFunc decoder_table[256] = {0};
+
+void decode_default(Arena* a, CodeStream* stream, Instruction* instr) {
+	// printf("NOT IMPLEMENTED: [%x]\n", stream->data[stream->at]);
+	// Assume that instr is zero initialized, so just push it and later print as NOT IMPLEMENTED
+	*push(a, out) = instr;
+}
+
+static void extract_wideness_and_direction_0(Instruction* instr, CodeStream* stream) {
+	uint8_t byte = stream->data[stream->at++];
+	instr->wide = byte & 0b1;
+	instr->direction = (byte >> 1) & 0b1;
+}
+
+static void extract_wideness(Instruction* instr, CodeStream* stream) {
+	uint8_t byte = stream->data[stream->at++];
+	instr->wide = byte & 0b1;
+}
+
+static void extract_wideness_and_signextend(Instruction* instr, CodeStream* stream) {
+	uint8_t byte = stream->data[stream->at++];
+	instr->wide = byte & 0b1;
+	instr->sign_extend = (byte >> 1) & 0b1;
+}
+
+static void extract_mod_reg_rm_0(Instruction* instr, CodeStream* stream) {
+	uint8_t byte = stream->data[stream->at++];
+	int32_t mod = (byte >> 6) & 0b11;
+	int32_t reg = (byte >> 3) & 0b111;
+	int32_t rm = byte & 0b111;
+	instr->mod = mod;
+	instr->reg = reg;
+	instr->rm = rm;
+}
+
+static void extract_direct_address_0(Instruction* instr, CodeStream* stream) {
+	instr->direct_address = stream->data[stream->at++];
+	instr->direct_address = (stream->data[stream->at++] << 8) | (instr->direct_address);
+}
+
+static void extract_displacement_u8(Instruction* instr, CodeStream* stream) {
+	// TODO: somewhat ugly
+	memcpy((uint8_t*)&instr->disp, &stream->data[stream->at], 1);
+	stream->at++;
+	if ((int8_t)(((uint8_t*)&instr->disp)[0]) < 0) {
+		((uint8_t*)&instr->disp)[1] = 0xFF;
+	}
+}
+
+static void extract_displacement_u16(Instruction* instr, CodeStream* stream) {
+	// TODO: somewhat ugly
+	memcpy((uint8_t*)&instr->disp, &stream->data[stream->at], 2);
+	stream->at += 2;
+}
+
+
+static void extract_imm(Instruction* instr, CodeStream* stream) {
+	// TODO: make it not ugly
+	if (instr->wide) {
+		if (instr->sign_extend) {
+			memcpy((uint8_t*)&instr->imm, &stream->data[stream->at], 1);
+			stream->at++;
+			if ((int8_t)(((uint8_t*)&instr->imm)[0]) < 0) {
+				((uint8_t*)&instr->imm)[1] = 0xFF;
+			}
+		} else {
+			memcpy((uint8_t*)&instr->imm, &stream->data[stream->at], 2);
+			stream->at += 2;
+		}
+	} else {
+		if (instr->sign_extend) {
+			memcpy((uint8_t*)&instr->imm, &stream->data[stream->at], 1);
+			stream->at++;
+			if ((int8_t)(((uint8_t*)&instr->imm)[0]) < 0) {
+				((uint8_t*)&instr->imm)[1] = 0xFF;
+			}
+		} else {
+			memcpy((uint8_t*)&instr->imm, &stream->data[stream->at], 1);
+			stream->at++;
+			if ((int8_t)(((uint8_t*)&instr->imm)[0]) < 0) {
+				((uint8_t*)&instr->imm)[1] = 0x00;
+			}
+		}
+	}
+}
+
+static void extract_imm_with_signextend(Instruction* instr, CodeStream* stream) {
+
+}
+
+static void extract_stream_slice(Instruction* instr, CodeStream* stream, ptrdiff_t beg) {
+	instr->data = &stream->data[beg];
+	instr->len = stream->at - beg;	
+}
+
+void decode_0x00_0x01_0x02_0x03(Arena* a, CodeStream* stream, Instruction* instr) {
+	ptrdiff_t beg = stream->at;
+	extract_wideness_and_direction_0(instr, stream);
+	extract_mod_reg_rm_0(instr, stream);
+	if (mod == 0b00 && rm == 0b110) {
+		extract_direct_address(instr, stream);
+	} else if (mod == 0b01) {
+		extract_displacement_u8(instr, stream);
+	} else if (mod == 0b10) {
+		extract_displacement_u16(instr, stream);
+	}
+	extract_slice(instr, stream, beg);
+
+	// Maybe no need to compute instruction name here
+	// It needed when executing and printing instruction, so compute name there
+	if (instr->d) {
+		if (instr->w) {
+			instr->name = INSTR_ADD_REG16_REGMEM16;
+		} else {
+			instr->name = INSTR_ADD_REG8_REGMEM8;
+		}
+	} else {
+		if (instr->w) {
+			instr->name = INSTR_ADD_REGMEM16_REG16;
+		} else {
+			instr->name = INSTR_ADD_REGMEM8_REG8;
+		}		
+	}
+}
+
+void decode_0x04_0x05(Arena* a, CodeStream* stream, Instruction* instr) {
+	ptrdiff_t beg = stream->at;
+	extract_wideness(instr, stream);
+	extract_imm(instr, stream);
+	extract_slice(instr, stream, beg);
+	if (instr->wide) {
+		instr->name = INSTR_ADD_ACC16_IMM;
+	} else {
+		instr->name = INSTR_ADD_ACC8_IMM;
+	}
+}
+
+// 0x80_0x81_0x82_0x83
+// ADD, ADC, SUB, SBB, CMP, OR, AND, XOR
+void decode_0x80_0x81_0x82_0x83(Arena* a, CodeStream* stream, Instruction* instr) {
+	ptrdiff_t beg = stream->at;
+	extract_wideness_and_signextend(isntr, stream);
+	extract_mod_reg_rm_0(instr, stream);
+	if (mod == 0b00 && rm == 0b110) {
+		extract_direct_address(instr, stream);
+	} else if (mod == 0b01) {
+		extract_displacement_u8(instr, stream);
+	} else if (mod == 0b10) {
+		extract_displacement_u16(instr, stream);
+	}
+	extract_imm(instr, stream);
+	extract_slice(instr, stream, beg);
+	if (instr->reg == 0b000) {
+		if (instr->w) {
+			instr->name = INSTR_ADD_REGMEM16_IMM;
+		} else {
+			instr->name = INSTR_ADD_REGMEM8_IMM;
+		}
+	} else if (instr->reg == 0b010) {
+		if (instr->w) {
+			instr->name = INSTR_ADC_REGMEM16_IMM;
+		} else {
+			instr->name = INSTR_ADC_REGMEM8_IMM;
+		}
+	} else if (instr->reg == 0b101) {
+		if (instr->w) {
+			instr->name = INSTR_SUB_REGMEM16_IMM;
+		} else {
+			instr->name = INSTR_SUB_REGMEM8_IMM;
+		}
+	} else if (instr->reg == 0b011) {
+		if (instr->w) {
+			instr->name = INSTR_SBB_REGMEM16_IMM;
+		} else {
+			instr->name = INSTR_SBB_REGMEM8_IMM;
+		}
+	} else if (instr->reg == 0b111) {
+		if (instr->w) {
+			instr->name = INSTR_CMP_REGMEM16_IMM;
+		} else {
+			instr->name = INSTR_CMP_REGMEM8_IMM;
+		}
+	} else if (instr->reg == 0b100) {
+		if (instr->w) {
+			instr->name = INSTR_AND_REGMEM16_IMM;
+		} else {
+			instr->name = INSTR_AND_REGMEM8_IMM;
+		}
+	} else if (instr->reg == 0b001) {
+		if (instr->w) {
+			instr->name = INSTR_OR_REGMEM16_IMM;
+		} else {
+			instr->name = INSTR_OR_REGMEM8_IMM;
+		}
+	} else {
+		if (instr->w) {
+			instr->name = INSTR_XOR_REGMEM16_IMM;
+		} else {
+			instr->name = INSTR_XOR_REGMEM8_IMM;
+		}
+	}
+}
+
+void init_decoder_table(DecoderFunc* decoder_table, ptrdiff_t size) {
+	for (int i = 0; i < size; i++) {
+		decoder_table[i] = decode_default;
+	}
+	decoder_table[0x00] = decode_0x00_0x01_0x02_0x03; // NOTE: Should rename decode_0x00_0x01_0x02_0x03 to decode_add_regmem
+	decoder_table[0x01] = decode_0x00_0x01_0x02_0x03;
+	decoder_table[0x02] = decode_0x00_0x01_0x02_0x03;
+	decoder_table[0x03] = decode_0x00_0x01_0x02_0x03; // :NOTE
+	decoder_table[0x04] = decode_0x04_0x05;           // NOTE: Should rename to decode_add_acc_imm
+	decoder_table[0x05] = decode_0x04_0x05;
+
+	// ...
+
+	decoder_table[0x80] = decode_0x80_0x81_0x82_0x83; // NOTE: Maybe rename to decode_add_or_adc_sbb_and_sub_xor_cmp
+	decoder_table[0x81] = decode_0x80_0x81_0x82_0x83;
+	decoder_table[0x82] = decode_0x80_0x81_0x82_0x83;
+	decoder_table[0x83] = decode_0x80_0x81_0x82_0x83;
+}
+
+enum Status decode2(Arena* a, CodeStream* cs, InstructionSlice* out) {
+	for (; cs->at < cs->len;) {
+		uint8_t byte = cs->data[cs->at];
+		Instruction instr = {};
+		DecoderFunc decoder = decoder_table[byte];
+		decoder(a, cs, &instr);
+		*push(a, out) = instr;
+	}
+	return OK;
+}
+
+//
+
 // Transforms bytes stream into instructions
 enum Status decode(Arena *a, CodeStream *cs, InstructionSlice *out) {
 

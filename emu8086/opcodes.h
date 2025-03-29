@@ -1,6 +1,36 @@
 #include <stdint.h>
 #include <stddef.h>
 
+// This enum is not related to opcode value.
+// INSTR_NOT_IMPLEMENTED = 0 choosed because it is convinient:
+// zero initialized Instruction will 'not_implemented'
+enum InstructionName {
+	INSTR_NOT_IMPLEMENTED = 0,
+	INSTR_NOT_USED = 1,
+	INSTR_ADD_REGMEM8_REG8,
+	INSTR_ADD_REGMEM16_REG16,
+
+	INSTR_ADD_ACC8_IMM,    // Maybe better to name just INSTR_ADD_ACC_IMM. To not encode wideness and direction in name
+	INSTR_ADD_ACC16_IMM,
+
+	INSTR_ADD_REGMEM8_IMM,
+	INSTR_ADD_REGMEM16_IMM,
+	INSTR_ADC_REGMEM8_IMM,
+	INSTR_ADC_REGMEM16_IMM,
+	INSTR_SUB_REGMEM8_IMM,
+	INSTR_SUB_REGMEM16_IMM,
+	INSTR_SBB_REGMEM16_IMM,
+	INSTR_SBB_REGMEM8_IMM,
+	INSTR_CMP_REGMEM16_IMM,
+	INSTR_CMP_REGMEM8_IMM,
+	INSTR_AND_REGMEM16_IMM,
+	INSTR_AND_REGMEM8_IMM,
+	INSTR_OR_REGMEM16_IMM,
+	INSTR_OR_REGMEM8_IMM,
+	INSTR_XOR_REGMEM16_IMM,
+	INSTR_XOR_REGMEM8_IMM,
+}
+
 enum InstructionOpcode {
 	OPCODE_ADD8_RM_REG     = 0x00,
 	OPCODE_ADD16_RM_REG    = 0X01,
@@ -58,7 +88,19 @@ enum InstructionOpcode {
 	OPCODE_MOV16_MEM_IMM        = 0xC7,
 };
 
+// TODO maybe not needed
+// enum InstrArithImmWithRegMem {
+// 	INSTR_ARITH_IMM_WITH_REGMEM_ADD = 0b000, 
+// 	INSTR_ARITH_IMM_WITH_REGMEM_OR  = 0b001,
+// 	INSTR_ARITH_IMM_WITH_REGMEM_ADC = 0b010, 
+// 	INSTR_ARITH_IMM_WITH_REGMEM_SBB = 0b011,
+// 	INSTR_ARITH_IMM_WITH_REGMEM_AND = 0b100,
+// 	INSTR_ARITH_IMM_WITH_REGMEM_SUB = 0b101, 
+// 	INSTR_ARITH_IMM_WITH_REGMEM_CMP = 0b111,
+// };
+
 typedef struct {
+	enum InstructionName name;
 	enum InstructionOpcode opcode;
 	uint8_t* data;
 	ptrdiff_t len;
