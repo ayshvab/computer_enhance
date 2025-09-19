@@ -231,15 +231,27 @@ typedef enum segment_reg {
 	SEG_DS
 } SegmentReg;
 
+static char* segment_registers_to_cstr[4] = {
+	"es",
+	"cs",
+	"ss",
+	"ds"
+};
+
+static enum segment_reg segment_registers[4] = {
+	SEG_ES,
+	SEG_CS,
+	SEG_SS,
+	SEG_DS
+};
+
 typedef enum operand_kind {
 	OPERAND_NONE = 0,
-	OPERAND_REG,	 /* general-purpose register (8/16) */
-	OPERAND_SEGREG,	 /* segment register */
-	OPERAND_MEM,	 /* memory reference with 8086 EA (base/index/disp + optional seg
-			    override) */
-	OPERAND_IMM,	 /* immediate (8/16) */
-	OPERAND_RELDISP, /* relative displacement (for Jcc/LOOP/JCXZ), signed 8 or 16
-			  */
+	OPERAND_REG,
+	OPERAND_SEGREG,
+	OPERAND_MEM,
+	OPERAND_IMM,
+	OPERAND_RELDISP, /* relative displacement (for Jcc/LOOP/JCXZ), signed 8 or 16 */
 	OPERAND_PTR16	 /* far pointer immediate: seg:off (for JMP FAR/CALL FAR) */
 } OperandKind;
 
@@ -404,6 +416,8 @@ static ErrorCode decode_mov(u8 opcode, Str bytes, usize* at, Instruction* out) {
 	case 0x89:
 	case 0x8A:
 	case 0x8B:
+	case 0x8C:
+	case 0x8E:
 	{
 		u8 mod, reg, rm;
 		Operand op0, op1;
@@ -419,6 +433,9 @@ static ErrorCode decode_mov(u8 opcode, Str bytes, usize* at, Instruction* out) {
 		*/
 		direction = ((opcode >> 1) & 0x01);
 		out->width = (opcode & 0x01) ? WIDTH16 : WIDTH8;
+		if (opcode == 0x8C || opcode == 0x8E) {
+			out->width = WIDTH16;
+		}
 
 		operand_init(&op0);
 		operand_init(&op1);
@@ -430,9 +447,16 @@ static ErrorCode decode_mov(u8 opcode, Str bytes, usize* at, Instruction* out) {
 		reg = modrm_reg(val);
 		rm = modrm_rm(val);
 
-		op0.kind = OPERAND_REG;
-		op0.width = out->width;
-		op0.reg.reg = (out->width == WIDTH8) ? registers[reg] : registers[reg + 8];
+
+		if (opcode == 0x8C || opcode == 0x8E) {
+			op0.kind = OPERAND_SEGREG;
+			op0.segreg.segreg = segment_registers[reg];
+		} else {
+			op0.kind = OPERAND_REG;
+			op0.width = out->width;
+			op0.reg.reg = (out->width == WIDTH8) ? registers[reg] : registers[reg + 8];
+		}
+
 		op1.width = out->width;
 		out->operand_count = 2;
 
@@ -489,10 +513,6 @@ static ErrorCode decode_mov(u8 opcode, Str bytes, usize* at, Instruction* out) {
 			out->operands[1] = op0;
 		}
 	} break;
-
-	/* MOV segreg, reg/mem */
-	/* case 0x8C: */
-	/* case 0x8E: {} break; */
 
 	/* MOV reg, imm */
 	case 0xB0:
@@ -779,6 +799,11 @@ fmt_append_operand(char *str, u32 *str_len, u32 str_cap, Operand op) {
 			cstr = registers_to_cstr[op.reg.reg-1];
 			r = fmt_append_str(str, str_len, str_cap, cstr, (u32)strlen(cstr));
 			if (r != ERR_OK) return r;
+		} break;
+		case OPERAND_SEGREG: {
+			cstr = segment_registers_to_cstr[op.segreg.segreg-1];
+			r = fmt_append_str(str, str_len, str_cap, cstr, (u32)strlen(cstr));
+			if (r != ERR_OK) return r;			
 		} break;
 		case OPERAND_IMM: {
 			r = fmt_append_u32_as_dec(str, str_len, str_cap, op.imm.imm);
