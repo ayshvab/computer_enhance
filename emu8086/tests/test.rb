@@ -10,8 +10,8 @@ class TestRunner
       "mov_reg_reg",
       "mov_reg_mem",
       "mov_mem_reg",
-      # "mov_reg_imm"
-      # "mov_mem_imm",
+      "mov_reg_imm",
+      "mov_mem_imm",
       # "mov_segreg",
       
       # "add_reg_reg",
