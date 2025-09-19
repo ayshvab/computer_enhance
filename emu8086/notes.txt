@@ -1,3 +1,5 @@
 Robust Wavefront OBJ model parsing in C
 https://nullprogram.com/blog/2025/03/02/
 
+simplify printing of instruction: do not check fmt buffer limit, allocate enough space
+for one line of instruction.
