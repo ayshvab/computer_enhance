@@ -27,7 +27,6 @@ typedef uintptr_t uptr;
 
 #define KB(x) ((usize)(x) << 10)
 #define MB(x) ((usize)(x) << 20)
-#define GB(x) ((usize)(x) << 30)
 
 #define MAX_INSTRUCTIONS (256 << 10)
 
