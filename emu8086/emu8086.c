@@ -40,6 +40,7 @@ typedef enum error_code {
 	ERR_ARRAY_LIMIT = -5,
 	ERR_FMT_LIMIT = -6,
 	ERR_INVALID_INSTRUCTION = -7,
+	ERR_MNEMONIC_UNIMPLEMENTED = -8,
 } ErrorCode;
 
 #define PERM_BUFFER_SIZE MB(512)
@@ -261,6 +262,8 @@ typedef struct memea {
 	Reg index;
 	int has_disp;
 	i16 disp;
+	int has_address;
+	u16 address;
 } MemEA;
 
 static void memea_init(MemEA* m) {
@@ -269,6 +272,8 @@ static void memea_init(MemEA* m) {
 	m->index = REG_NONE;
 	m->has_disp = 0;
 	m->disp = 0;
+	m->has_address = 0;
+	m->address = 0;
 }
 
 typedef struct operand {
@@ -402,267 +407,28 @@ static ErrorCode fetch16(Str bytes, usize* at, u16* out) {
 	return ERR_OK;
 }
 
-static ErrorCode decode_mov(u8 opcode, Str bytes, usize* at, Instruction* out) {
-	ErrorCode r;
-	u8 direction;
-	u8 val;
-
-	r = ERR_OK;
-	out->mnemonic = MNEMONIC_MOV;
-	
-	switch (opcode) {
-	/* MOV reg, reg/mem */
-	case 0x88:
-	case 0x89:
-	case 0x8A:
-	case 0x8B:
-	case 0x8C:
-	case 0x8E:
-	{
-		u8 mod, reg, rm;
-		Operand op0, op1;
-
-		r = fetch8(bytes, at, &val);
-		if (r != ERR_OK) goto _end;
-
-		/*
-		D field, generally specifies the ‘‘direction’’ of the operation:
-		1 = the REG field in the second byte identifies the
-		destination operand;
-		0 = the REG field identifies the source operand.
-		*/
-		direction = ((opcode >> 1) & 0x01);
-		out->width = (opcode & 0x01) ? WIDTH16 : WIDTH8;
-		if (opcode == 0x8C || opcode == 0x8E) {
-			out->width = WIDTH16;
-		}
-
-		operand_init(&op0);
-		operand_init(&op1);
-
-		out->has_modrm = 1;
-		out->modrm = val;
-
-		mod = modrm_mod(val);
-		reg = modrm_reg(val);
-		rm = modrm_rm(val);
-
-
-		if (opcode == 0x8C || opcode == 0x8E) {
-			op0.kind = OPERAND_SEGREG;
-			op0.segreg.segreg = segment_registers[reg];
-		} else {
-			op0.kind = OPERAND_REG;
-			op0.width = out->width;
-			op0.reg.reg = (out->width == WIDTH8) ? registers[reg] : registers[reg + 8];
-		}
-
-		op1.width = out->width;
-		out->operand_count = 2;
-
-		switch (mod) {
-		case 3: /* Register mode */
-			op1.kind = OPERAND_REG;
-			op1.reg.reg = (out->width == WIDTH8) ? registers[rm] : registers[rm + 8];
-			break;
-		case 0:
-		case 1:
-		case 2: /* memory mode */
-			op1.kind = OPERAND_MEM;
-			memea_init(&op1.memea.memea);
-			op1.memea.memea.base = ea_base_register[rm];
-			op1.memea.memea.index = ea_index_register[rm];
-			switch (mod) {
-			case 0:
-				if (rm == 6) { /* exception: direct addressing */
-					u16 disp16;
-					op1.memea.memea.base = REG_NONE;
-					op1.memea.memea.index = REG_NONE;
-					op1.memea.memea.has_disp = 1;
-					r = fetch16(bytes, at, &disp16);
-					if (r != ERR_OK)
-						goto _end;
-					op1.memea.memea.disp = (i16)disp16;
-				}
-				break;
-			case 1: {
-				u8 disp8;
-				op1.memea.memea.has_disp = 1;
-				r = fetch8(bytes, at, &disp8);
-				op1.memea.memea.disp = (i8)disp8;
-				if (r != ERR_OK)
-					goto _end;
-			} break;
-			case 2: {
-				u16 disp16;
-				op1.memea.memea.has_disp = 1;
-				r = fetch16(bytes, at, &disp16);
-				op1.memea.memea.disp = (i16)disp16;
-				if (r != ERR_OK)
-					goto _end;
-			} break;
-			}
-			break;
-		}
-
-		if (direction == 1) {
-			out->operands[0] = op0;
-			out->operands[1] = op1;
-		} else {
-			out->operands[0] = op1;
-			out->operands[1] = op0;
-		}
-	} break;
-
-	/* MOV reg, imm */
-	case 0xB0:
-	case 0xB1:
-	case 0xB2:
-	case 0xB3:
-	case 0xB4:
-	case 0xB5:
-	case 0xB6:
-	case 0xB7:
-	case 0xB8:
-	case 0xB9:
-	case 0xBA:
-	case 0xBB:
-	case 0xBC:
-	case 0xBD:
-	case 0xBE:
-	case 0xBF: {
-		u8 reg;
-		u16 imm16_val;
-		u8 imm8_val;
-		Operand op0, op1;
-
-		operand_init(&op0);
-		operand_init(&op1);
-
-		out->width = ((opcode >> 3) & 0x01) ? WIDTH16 : WIDTH8;
-		out->has_modrm = 0;
-
-		reg = opcode & 7;
-
-		op0.kind = OPERAND_REG;
-		op0.reg.reg = (out->width == WIDTH8) ? registers[reg] : registers[reg + 8];
-		op0.width = out->width;
-
-		op1.kind = OPERAND_IMM;
-		op1.width = out->width;
-
-		if (op1.width == WIDTH8) {
-			r = fetch8(bytes, at, &imm8_val);
-		} else {
-			r = fetch16(bytes, at, &imm16_val);
-		}
-		if (r != ERR_OK) goto _end;
-		op1.imm.imm = (op1.width == WIDTH8) ? imm8_val : imm16_val;
-
-		out->operand_count = 2;
-		out->operands[0] = op0;
-		out->operands[1] = op1;
-	} break;
-
-	/* MOV memea, imm */
-	case 0xC6:
-	case 0xC7: {
-		u8 mod, rm;
-		u16 imm16_val;
-		u8 imm8_val;
-		Operand op0, op1;
-
-		operand_init(&op0);
-		operand_init(&op1);
-
-		out->width = (opcode & 0x01) ? WIDTH16 : WIDTH8;
-		op0.width = out->width;
-		op1.width = out->width;
-
-		r = fetch8(bytes, at, &val);
-		if (r != ERR_OK) goto _end;
-
-		out->has_modrm = 1;
-		out->modrm = val;
-
-		mod = modrm_mod(val);
-		rm = modrm_rm(val);
-
-		switch (mod) {
-		case 3: /* Register mode */
-			op0.kind = OPERAND_NONE;
-			r = ERR_INVALID_INSTRUCTION;
-			goto _end;
-			break;
-		case 0:
-		case 1:
-		case 2: /* memory mode */
-			op0.kind = OPERAND_MEM;
-			memea_init(&op0.memea.memea);
-			op0.memea.memea.base = ea_base_register[rm];
-			op0.memea.memea.index = ea_index_register[rm];
-			switch (mod) {
-			case 0:
-				if (rm == 6) { /* exception: direct addressing */
-					u16 disp16;
-					op0.memea.memea.base = REG_NONE;
-					op0.memea.memea.index = REG_NONE;
-					op0.memea.memea.has_disp = 1;
-					r = fetch16(bytes, at, &disp16);
-					if (r != ERR_OK)
-						goto _end;
-					op0.memea.memea.disp = (i16)disp16;
-				}
-				break;
-			case 1: {
-				u8 disp8;
-				op0.memea.memea.has_disp = 1;
-				r = fetch8(bytes, at, &disp8);
-				op0.memea.memea.disp = (i8)disp8;
-				if (r != ERR_OK)
-					goto _end;
-			} break;
-			case 2: {
-				u16 disp16;
-				op0.memea.memea.has_disp = 1;
-				r = fetch16(bytes, at, &disp16);
-				op0.memea.memea.disp = (i16)disp16;
-				if (r != ERR_OK)
-					goto _end;
-			} break;
-			}
-			break;
-		}
-
-		if (op1.width == WIDTH8) {
-			r = fetch8(bytes, at, &imm8_val);
-		} else {
-			r = fetch16(bytes, at, &imm16_val);
-		}
-		if (r != ERR_OK) goto _end;
-		op1.imm.imm = (op1.width == WIDTH8) ? imm8_val : imm16_val;
-		op1.kind = OPERAND_IMM;
-
-		out->operand_count = 2;
-		out->operands[0] = op0;
-		out->operands[1] = op1;
-	} break;
-
-	default:
-		FATAL("THIS MOV IS NOT IMPLEMENTED YET");
-		break;
-	}
-_end:
-	return r;
-}
-
 static ErrorCode emu8086_decode(Arena* perm, Str bytes,
 				InstructionArray* instructions) {
 	ErrorCode r;
 	usize at;
 	usize prev_at;
-	u8 val;
+	u8 head_byte, byte;
 	Instruction instr;
+	Operand tmp_operand;
+	
+	u8 direction;
+	Width width;
+	/*
+		D field, generally specifies the ‘‘direction’’ of the operation:
+		1 = the REG field in the second byte identifies the destination operand;
+		0 = the REG field identifies the source operand.
+	*/
+	u8 mod, reg, rm;
+	u8 disp8;
+	u16 disp16;
+	u16 imm16;
+	u8 imm8;
+	u16 address16;
 
 	if (!perm || !instructions)
 		return ERR_INVALID_ARGUMENT;
@@ -672,59 +438,227 @@ static ErrorCode emu8086_decode(Arena* perm, Str bytes,
 	r = ERR_OK;
 	at = 0;
 	prev_at = 0;
-	val = 0;
+	byte = 0;
 
 	instruction_init(&instr);
 	while (at < bytes.len) {
+		operand_init(&tmp_operand);
 		instruction_init(&instr);
 		instr.raw.data = &bytes.data[at];
-		r = fetch8(bytes, &at, &val);
-		if (r != ERR_OK)
-			goto _end;
-		switch (val) {
-		/* MOV */
-		case 0x88:
-		case 0x89:
-		case 0x8A:
-		case 0x8B:
-		case 0x8C:
-		case 0x8E:
-		case 0xA0:
-		case 0xA1:
-		case 0xA2:
-		case 0xA3:
-		case 0xB0:
-		case 0xB1:
-		case 0xB2:
-		case 0xB3:
-		case 0xB4:
-		case 0xB5:
-		case 0xB6:
-		case 0xB7:
-		case 0xB8:
-		case 0xB9:
-		case 0xBA:
-		case 0xBB:
-		case 0xBC:
-		case 0xBD:
-		case 0xBE:
-		case 0xBF:
-		case 0xC6:
-		case 0xC7:
-		{
-			r = decode_mov(val, bytes, &at, &instr);
-			if (r != ERR_OK) goto _end;
-		} break;
+		r = fetch8(bytes, &at, &head_byte);
+		if (r != ERR_OK) goto _end;
+		switch (head_byte) {
+		/*
+			case 0x00:
+			case 0x01:
+			case 0x02:
+			case 0x03:
+			case 0x04:
+			case 0x05: {
+			} break;
+		*/
+			/* MOV */
+			case 0x88:
+			case 0x89:
+			case 0x8A:
+			case 0x8B:
+			case 0x8C:
+			case 0x8E:
+			{
+				instr.mnemonic = MNEMONIC_MOV;
+				direction = ((head_byte >> 1) & 0x01);
+				if (head_byte == 0x8C || head_byte == 0x8E) {
+					width = WIDTH16;
+				} else {
+					width = (head_byte & 0x01) ? WIDTH16 : WIDTH8;
+				}
+				r = fetch8(bytes, &at, &byte);
+				if (r != ERR_OK) goto _end;
+				instr.has_modrm = 1;
+				instr.modrm = byte;
+				instr.width = width;
+				mod = modrm_mod(byte);
+				reg = modrm_reg(byte);
+				rm = modrm_rm(byte);
+				if (head_byte == 0x8C || head_byte == 0x8E) {
+					instr.operands[0].kind = OPERAND_SEGREG;
+					instr.operands[0].segreg.segreg = segment_registers[reg];
+				} else {
+					instr.operands[0].kind = OPERAND_REG;
+					instr.operands[0].width = instr.width;
+					instr.operands[0].reg.reg = (instr.width == WIDTH8) ? registers[reg] : registers[reg + 8];
+				}
 
-		/* MOVS:               A4, A5 */
-		default: {
-			instr.mnemonic = MNEMONIC_UNIMPLEMENTED;
-		}
+				instr.operands[1].width = instr.width;
+				if (mod == 3) {
+					instr.operands[1].kind = OPERAND_REG;
+					instr.operands[1].reg.reg = (instr.width == WIDTH8) ? registers[rm] : registers[rm + 8];
+				} else if (mod == 0 || mod == 1 || mod == 2) {
+					instr.operands[1].kind = OPERAND_MEM;
+					memea_init(&instr.operands[1].memea.memea);
+					instr.operands[1].memea.memea.base = ea_base_register[rm];
+					instr.operands[1].memea.memea.index = ea_index_register[rm];
+					if (mod == 0 && rm == 6) {
+						instr.operands[1].memea.memea.base = REG_NONE;
+						instr.operands[1].memea.memea.index = REG_NONE;
+						r = fetch16(bytes, &at, &address16);
+						if (r != ERR_OK) goto _end;
+						instr.operands[1].memea.memea.address = address16;
+						instr.operands[1].memea.memea.has_address = 1;
+					} else if (mod == 1) {
+						instr.operands[1].memea.memea.has_disp = 1;
+						r = fetch8(bytes, &at, &disp8);
+						instr.operands[1].memea.memea.disp = (i8)disp8;
+						if (r != ERR_OK) goto _end;
+					} else if (mod == 2) {
+						instr.operands[1].memea.memea.has_disp = 1;
+						r = fetch16(bytes, &at, &disp16);
+						instr.operands[1].memea.memea.disp = (i16)disp16;
+						if (r != ERR_OK) goto _end;
+					}
+				}
+				if (direction == 1) {
+				} else {
+					tmp_operand = instr.operands[0];
+					instr.operands[0] = instr.operands[1];
+					instr.operands[1] = tmp_operand;
+				}
+				instr.operand_count = 2;
+			} break;
+			/* mov accumulator, mem */
+			case 0xA0:
+			case 0xA1:
+			case 0xA2:
+			case 0xA3:
+			{
+				instr.mnemonic = MNEMONIC_MOV;
+				direction = ((head_byte >> 1) & 0x01);
+				instr.width = (head_byte & 0x01) ? WIDTH16 : WIDTH8;
+				instr.operands[1].kind = OPERAND_REG;
+				instr.operands[0].kind = OPERAND_MEM;
+				memea_init(&instr.operands[0].memea.memea);
+				if (instr.width == WIDTH8) {
+					instr.operands[1].reg.reg = REG_AL;
+				} else {
+					instr.operands[1].reg.reg = REG_AX;
+				}
+				r = fetch16(bytes, &at, &address16);
+				if (r != ERR_OK) goto _end;
+				instr.operands[0].memea.memea.address = address16;
+				instr.operands[0].memea.memea.has_address = 1;
+				if (direction == 1) {
+				} else {
+					tmp_operand = instr.operands[0];
+					instr.operands[0] = instr.operands[1];
+					instr.operands[1] = tmp_operand;
+				}
+				instr.operand_count = 2;
+			} break;
+			/* MOVS: A4, A5 */
+			case 0xB0:
+			case 0xB1:
+			case 0xB2:
+			case 0xB3:
+			case 0xB4:
+			case 0xB5:
+			case 0xB6:
+			case 0xB7:
+			case 0xB8:
+			case 0xB9:
+			case 0xBA:
+			case 0xBB:
+			case 0xBC:
+			case 0xBD:
+			case 0xBE:
+			case 0xBF:
+			{
+				instr.mnemonic = MNEMONIC_MOV;
+				instr.width = ((head_byte >> 3) & 0x01) ? WIDTH16 : WIDTH8;
+				instr.has_modrm = 0;
+				reg = head_byte & 7;
+				instr.operands[0].kind = OPERAND_REG;
+				instr.operands[0].width = instr.width;
+				instr.operands[1].kind = OPERAND_IMM;
+				instr.operands[1].width = instr.width;
+				if (instr.width == WIDTH8) {
+					instr.operands[0].reg.reg = registers[reg];
+					r = fetch8(bytes, &at, &imm8);
+					if (r != ERR_OK) goto _end;
+					instr.operands[1].imm.imm = imm8;
+				} else {
+					instr.operands[0].reg.reg = registers[reg + 8];
+					r = fetch16(bytes, &at, &imm16);
+					if (r != ERR_OK) goto _end;
+					instr.operands[1].imm.imm = imm16;
+				}
+				instr.operand_count = 2;
+			} break;
+			/* MOV memea, imm */
+			case 0xC6:
+			case 0xC7:
+			{
+				instr.mnemonic = MNEMONIC_MOV;
+				instr.width = (head_byte & 0x01) ? WIDTH16 : WIDTH8;
+				instr.has_modrm = 1;
+				instr.operands[0].width = instr.width;
+				instr.operands[1].width = instr.width;
+				r = fetch8(bytes, &at, &byte);
+				if (r != ERR_OK) goto _end;
+				instr.modrm = byte;
+				mod = modrm_mod(byte);
+				rm = modrm_rm(byte);
+				if (mod == 3) {
+					r = ERR_INVALID_INSTRUCTION;
+					goto _end;
+				} else if (mod == 0 || mod == 1 || mod == 2) {
+					instr.operands[0].kind = OPERAND_MEM;
+					memea_init(&instr.operands[0].memea.memea);
+					instr.operands[0].memea.memea.base = ea_base_register[rm];
+					instr.operands[0].memea.memea.index = ea_index_register[rm];
+					if (mod == 0) {
+						if (rm == 6) {
+							instr.operands[0].memea.memea.base = REG_NONE;
+							instr.operands[0].memea.memea.index = REG_NONE;
+							r = fetch16(bytes, &at, &address16);
+							if (r != ERR_OK) goto _end;
+							instr.operands[0].memea.memea.address = address16;
+							instr.operands[0].memea.memea.has_address = 1;
+						}
+					} else if (mod == 1) {
+						instr.operands[0].memea.memea.has_disp = 1;
+						r = fetch8(bytes, &at, &disp8);
+						if (r != ERR_OK) goto _end;
+						instr.operands[0].memea.memea.disp = (i8)disp8;
+					} else if (mod == 2) {
+						instr.operands[0].memea.memea.has_disp = 1;
+						r = fetch16(bytes, &at, &disp16);
+						if (r != ERR_OK) goto _end;
+						instr.operands[0].memea.memea.disp = (i16)disp16;
+					}
+				}
+
+				instr.operands[1].kind = OPERAND_IMM;
+				if (instr.width == WIDTH8) {
+					r = fetch8(bytes, &at, &imm8);
+					if (r != ERR_OK) goto _end;
+					instr.operands[1].imm.imm = imm8;
+				} else {
+					r = fetch16(bytes, &at, &imm16);
+					if (r != ERR_OK) goto _end;
+					instr.operands[1].imm.imm = imm16;
+				}
+
+				instr.operand_count = 2;
+			} break;
+
+			default: {
+				instr.mnemonic = MNEMONIC_UNIMPLEMENTED;
+				r = ERR_MNEMONIC_UNIMPLEMENTED;
+			}
 		}
 		instr.raw.len = at - prev_at;
 		r = instruction_array_add(instructions, &instr);
-		if (r != ERR_OK)
-			goto _end;
+		if (r != ERR_OK) goto _end;
 		prev_at = at;
 	}
 _end:
@@ -744,7 +678,7 @@ static char *cstr_from_mnemonic(Mnemonic m) {
 	}
 }
 
-static u32 fmt_append_u32_as_dec(char *str, u32 *str_len, u32 str_cap, u32 value) {
+static ErrorCode fmt_append_u32_as_dec(char *str, u32 *str_len, u32 str_cap, u32 value) {
 	ErrorCode r;
 
 	char buf[10];
@@ -769,6 +703,36 @@ static u32 fmt_append_u32_as_dec(char *str, u32 *str_len, u32 str_cap, u32 value
 	for (j = 0; j < len; ++j) {
 		dst[j] = buf[len-1-j];
 	}
+	*str_len += len;
+	return r;
+}
+
+static ErrorCode
+fmt_append_u32_as_hex(char *str, u32 *str_len, u32 str_cap, u32 value) {
+	static const char *hex_ascii = "0123456789abcdef";
+	ErrorCode r;
+	r = ERR_OK;
+
+	char buf[10];
+	u32 i, j, len;
+	char *dst;
+
+	dst = str + *str_len;
+
+	i = 0;
+	if (value == 0) { 
+		buf[i++] = '0';
+	}
+
+	while(value) {
+		buf[i++] = hex_ascii[value % 16];
+		value /= 16;
+	}
+	len = i;
+	for (j = 0; j < len; j++) {
+		dst[j] = buf[len-1-j];
+	}
+	dst[len++] = 'h';
 	*str_len += len;
 	return r;
 }
@@ -836,8 +800,13 @@ fmt_append_operand(char *str, u32 *str_len, u32 str_cap, Operand op) {
 					if (r != ERR_OK) return r;
 				}
 			} else {
-				r = fmt_append_u32_as_dec(str, str_len, str_cap, (u32)op.memea.memea.disp);
-				if (r != ERR_OK) return r;
+				if (op.memea.memea.has_disp) {
+					r = fmt_append_u32_as_dec(str, str_len, str_cap, (u32)op.memea.memea.disp);
+					if (r != ERR_OK) return r;
+				} else if (op.memea.memea.has_address) {
+					r = fmt_append_u32_as_hex(str, str_len, str_cap, op.memea.memea.address);
+					if (r != ERR_OK) return r;
+				}
 			}
 			r = fmt_append_str(str, str_len, str_cap, "]", 1);
 			if (r != ERR_OK) return r;
@@ -853,6 +822,7 @@ fmt_append_operand(char *str, u32 *str_len, u32 str_cap, Operand op) {
 	return r;
 }
 
+/* TODO: Simplify printing */
 static ErrorCode emu8086_print(Arena *arena, InstructionArray* instructions) {
 	ErrorCode r = ERR_OK;
 	usize i;
