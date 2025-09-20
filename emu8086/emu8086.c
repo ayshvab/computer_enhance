@@ -313,6 +313,17 @@ static void operand_init(Operand* op) {
 	op->reg.reg = REG_NONE;
 }
 
+static void operand_init_memea(Operand* op) {
+	op->kind = OPERAND_MEM;
+	op->memea.memea.seg_override = SEG_NONE;
+	op->memea.memea.base = REG_NONE;
+	op->memea.memea.index = REG_NONE;
+	op->memea.memea.has_disp = 0;
+	op->memea.memea.disp = 0;
+	op->memea.memea.has_address = 0;
+	op->memea.memea.address = 0;
+}
+
 typedef struct instruction {
 	Mnemonic mnemonic;
 	Operand operands[2];
@@ -494,8 +505,7 @@ static ErrorCode emu8086_decode(Arena* perm, Str bytes,
 					instr.operands[1].kind = OPERAND_REG;
 					instr.operands[1].reg.reg = (instr.width == WIDTH8) ? registers[rm] : registers[rm + 8];
 				} else if (mod == 0 || mod == 1 || mod == 2) {
-					instr.operands[1].kind = OPERAND_MEM;
-					memea_init(&instr.operands[1].memea.memea);
+					operand_init_memea(&instr.operands[1]);
 					instr.operands[1].memea.memea.base = ea_base_register[rm];
 					instr.operands[1].memea.memea.index = ea_index_register[rm];
 					if (mod == 0 && rm == 6) {
@@ -535,8 +545,7 @@ static ErrorCode emu8086_decode(Arena* perm, Str bytes,
 				direction = ((head_byte >> 1) & 0x01);
 				instr.width = (head_byte & 0x01) ? WIDTH16 : WIDTH8;
 				instr.operands[1].kind = OPERAND_REG;
-				instr.operands[0].kind = OPERAND_MEM;
-				memea_init(&instr.operands[0].memea.memea);
+				operand_init_memea(&instr.operands[0]);
 				if (instr.width == WIDTH8) {
 					instr.operands[1].reg.reg = REG_AL;
 				} else {
@@ -611,8 +620,7 @@ static ErrorCode emu8086_decode(Arena* perm, Str bytes,
 					r = ERR_INVALID_INSTRUCTION;
 					goto _end;
 				} else if (mod == 0 || mod == 1 || mod == 2) {
-					instr.operands[0].kind = OPERAND_MEM;
-					memea_init(&instr.operands[0].memea.memea);
+					operand_init_memea(&instr.operands[0]);
 					instr.operands[0].memea.memea.base = ea_base_register[rm];
 					instr.operands[0].memea.memea.index = ea_index_register[rm];
 					if (mod == 0) {
