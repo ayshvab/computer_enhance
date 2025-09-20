@@ -38,7 +38,7 @@ typedef enum error_code {
 	ERR_INVALID_ARGUMENT = -3,
 	ERR_OVER_BOUND = -4,
 	ERR_ARRAY_LIMIT = -5,
-	ERR_FMT_LIMIT = -6,
+	ERR_str_LIMIT = -6,
 	ERR_INVALID_INSTRUCTION = -7,
 	ERR_MNEMONIC_UNIMPLEMENTED = -8,
 } ErrorCode;
@@ -678,7 +678,7 @@ static char *cstr_from_mnemonic(Mnemonic m) {
 	}
 }
 
-static ErrorCode fmt_append_u32_as_dec(char *str, u32 *str_len, u32 str_cap, u32 value) {
+static ErrorCode str_append_u32_as_dec(char *str, u32 *str_len, u32 str_cap, u32 value) {
 	ErrorCode r;
 
 	char buf[10];
@@ -708,7 +708,7 @@ static ErrorCode fmt_append_u32_as_dec(char *str, u32 *str_len, u32 str_cap, u32
 }
 
 static ErrorCode
-fmt_append_u32_as_hex(char *str, u32 *str_len, u32 str_cap, u32 value) {
+str_append_u32_as_hex(char *str, u32 *str_len, u32 str_cap, u32 value) {
 	static const char *hex_ascii = "0123456789abcdef";
 	ErrorCode r;
 	r = ERR_OK;
@@ -738,11 +738,11 @@ fmt_append_u32_as_hex(char *str, u32 *str_len, u32 str_cap, u32 value) {
 }
 
 static ErrorCode
-fmt_append_str(char *str, u32 *str_len, u32 str_cap, char *s, u32 len) {
+str_append_str(char *str, u32 *str_len, u32 str_cap, char *s, u32 len) {
 	ErrorCode r;
 	r = ERR_OK;
 	if (str_cap - *str_len < len) {
-		return ERR_FMT_LIMIT;
+		return ERR_str_LIMIT;
 	}
 	memcpy(&str[(*str_len)], s, len);
 	*str_len += len;
@@ -751,7 +751,7 @@ fmt_append_str(char *str, u32 *str_len, u32 str_cap, char *s, u32 len) {
 
 
 static ErrorCode
-fmt_append_operand(char *str, u32 *str_len, u32 str_cap, Operand op) {
+str_append_operand(char *str, u32 *str_len, u32 str_cap, Operand op) {
 	ErrorCode r;
 	char *cstr;
 	u32 displacement;
@@ -761,62 +761,62 @@ fmt_append_operand(char *str, u32 *str_len, u32 str_cap, Operand op) {
 	switch(op.kind) {
 		case OPERAND_REG: {
 			cstr = registers_to_cstr[op.reg.reg-1];
-			r = fmt_append_str(str, str_len, str_cap, cstr, (u32)strlen(cstr));
+			r = str_append_str(str, str_len, str_cap, cstr, (u32)strlen(cstr));
 			if (r != ERR_OK) return r;
 		} break;
 		case OPERAND_SEGREG: {
 			cstr = segment_registers_to_cstr[op.segreg.segreg-1];
-			r = fmt_append_str(str, str_len, str_cap, cstr, (u32)strlen(cstr));
+			r = str_append_str(str, str_len, str_cap, cstr, (u32)strlen(cstr));
 			if (r != ERR_OK) return r;			
 		} break;
 		case OPERAND_IMM: {
-			r = fmt_append_u32_as_dec(str, str_len, str_cap, op.imm.imm);
+			r = str_append_u32_as_dec(str, str_len, str_cap, op.imm.imm);
 			if (r != ERR_OK) return r;
 		} break;
 		case OPERAND_MEM: {
-			r = fmt_append_str(str, str_len, str_cap, "[", 1);
+			r = str_append_str(str, str_len, str_cap, "[", 1);
 			if (r != ERR_OK) return r;
 			if (op.memea.memea.base != REG_NONE) {
 				cstr = registers_to_cstr[op.memea.memea.base-1];
-				r = fmt_append_str(str, str_len, str_cap, cstr, (u32)strlen(cstr));
+				r = str_append_str(str, str_len, str_cap, cstr, (u32)strlen(cstr));
 				if (r != ERR_OK) return r;
 				if (op.memea.memea.index != REG_NONE) {
-					r = fmt_append_str(str, str_len, str_cap, "+", 1);
+					r = str_append_str(str, str_len, str_cap, "+", 1);
 					if (r != ERR_OK) return r;
 					cstr = registers_to_cstr[op.memea.memea.index-1];
-					r = fmt_append_str(str, str_len, str_cap, cstr, (u32)strlen(cstr));
+					r = str_append_str(str, str_len, str_cap, cstr, (u32)strlen(cstr));
 					if (r != ERR_OK) return r;
 				}
 				if (op.memea.memea.has_disp) {
 					cstr = op.memea.memea.disp > 0 ? "+" : "-";
-					r = fmt_append_str(str, str_len, str_cap, cstr, 1);
+					r = str_append_str(str, str_len, str_cap, cstr, 1);
 					if (r != ERR_OK) return r;
 					if (op.memea.memea.disp < 0) {
 						displacement = (u32)(-(i32)op.memea.memea.disp);
 					} else {
 						displacement = (u32)op.memea.memea.disp;
 					}
-					r = fmt_append_u32_as_dec(str, str_len, str_cap, displacement);
+					r = str_append_u32_as_dec(str, str_len, str_cap, displacement);
 					if (r != ERR_OK) return r;
 				}
 			} else {
 				if (op.memea.memea.has_disp) {
-					r = fmt_append_u32_as_dec(str, str_len, str_cap, (u32)op.memea.memea.disp);
+					r = str_append_u32_as_dec(str, str_len, str_cap, (u32)op.memea.memea.disp);
 					if (r != ERR_OK) return r;
 				} else if (op.memea.memea.has_address) {
-					r = fmt_append_u32_as_hex(str, str_len, str_cap, op.memea.memea.address);
+					r = str_append_u32_as_hex(str, str_len, str_cap, op.memea.memea.address);
 					if (r != ERR_OK) return r;
 				}
 			}
-			r = fmt_append_str(str, str_len, str_cap, "]", 1);
+			r = str_append_str(str, str_len, str_cap, "]", 1);
 			if (r != ERR_OK) return r;
 		} break;
 		case OPERAND_NONE: {
-			r = fmt_append_str(str, str_len, str_cap, "OPERAND_NONE", sizeof("OPERAND_NONE")-1);
+			r = str_append_str(str, str_len, str_cap, "OPERAND_NONE", sizeof("OPERAND_NONE")-1);
 			if (r != ERR_OK) return r;
 		} break;
 		default:
-			r = fmt_append_str(str, str_len, str_cap, "UNIMPLEMENTED", sizeof("UNIMPLEMENTED")-1);
+			r = str_append_str(str, str_len, str_cap, "UNIMPLEMENTED", sizeof("UNIMPLEMENTED")-1);
 			if (r != ERR_OK) return r;
 	}
 	return r;
@@ -848,32 +848,32 @@ static ErrorCode emu8086_print(Arena *arena, InstructionArray* instructions) {
 
 		cstr = cstr_from_mnemonic(instr.mnemonic);
 
-		r = fmt_append_str(str, &str_len, str_cap, cstr, (u32)strlen(cstr));
+		r = str_append_str(str, &str_len, str_cap, cstr, (u32)strlen(cstr));
 		if (r != ERR_OK) return r;
 
 		if (instr.operand_count > 0) {
-			r = fmt_append_str(str, &str_len, str_cap, " ", 1);
+			r = str_append_str(str, &str_len, str_cap, " ", 1);
 			if (r != ERR_OK) return r;
 
 			if (instr.operands[0].kind == OPERAND_MEM && instr.operands[1].kind == OPERAND_IMM) {
 				cstr = instr.width == WIDTH8 ? "byte" : "word";
-				r = fmt_append_str(str, &str_len, str_cap, cstr, (u32)strlen(cstr));
+				r = str_append_str(str, &str_len, str_cap, cstr, (u32)strlen(cstr));
 				if (r != ERR_OK) return r;
 			}
-			r = fmt_append_str(str, &str_len, str_cap, " ", 1);
+			r = str_append_str(str, &str_len, str_cap, " ", 1);
 			if (r != ERR_OK) return r;
 
-			r = fmt_append_operand(str, &str_len, str_cap, instr.operands[0]);
+			r = str_append_operand(str, &str_len, str_cap, instr.operands[0]);
 			if (r != ERR_OK) return r;
 
 			if (instr.operand_count > 1) {
-				r = fmt_append_str(str, &str_len, str_cap, ", ", 2);
+				r = str_append_str(str, &str_len, str_cap, ", ", 2);
 				if (r != ERR_OK) return r;
-				r = fmt_append_operand(str, &str_len, str_cap, instr.operands[1]);
+				r = str_append_operand(str, &str_len, str_cap, instr.operands[1]);
 				if (r != ERR_OK) return r;
 			}
 		}
-		r = fmt_append_str(str, &str_len, str_cap, "\n", 1);
+		r = str_append_str(str, &str_len, str_cap, "\n", 1);
 		if (r != ERR_OK) return r;
 		fprintf(stdout, "%.*s", str_len, str);
 
