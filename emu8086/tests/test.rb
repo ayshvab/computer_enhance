@@ -18,7 +18,10 @@ class TestRunner
       "add_reg_imm",
       "add_reg_mem",
       "add_mem_reg",
-      "add_mem_imm"
+      "add_mem_imm",
+      "add_signext_pos",
+      "add_signext_neg",
+      "add_signext_edge"
     ]
   end
 
