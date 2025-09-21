@@ -14,11 +14,11 @@ class TestRunner
       "mov_mem_imm",
       "mov_segreg",
       
-      # "add_reg_reg",
-      # "add_reg_imm",
-      # "add_reg_mem",
-      # "add_mem_reg",
-      # "add_mem_imm"
+      "add_reg_reg",
+      "add_reg_imm",
+      "add_reg_mem",
+      "add_mem_reg",
+      "add_mem_imm"
     ]
   end
 
